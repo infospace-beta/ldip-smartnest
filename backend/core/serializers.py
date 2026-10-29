@@ -14,17 +14,37 @@ from .models import (
 
 
 class UserSerializer(serializers.ModelSerializer):
+    has_avatar = serializers.SerializerMethodField()
+
     class Meta:
         model = User
-        fields = ['id', 'email', 'username', 'role', 'phone', 'avatar', 'property_cluster', 'is_active_user', 'portal_access_granted', 'date_joined', 'registration_consent_at']
+        fields = ['id', 'email', 'username', 'role', 'phone', 'avatar', 'has_avatar', 'property_cluster', 'is_active_user', 'portal_access_granted', 'date_joined', 'registration_consent_at']
         read_only_fields = ['id', 'date_joined', 'registration_consent_at']
+
+    def get_has_avatar(self, obj):
+        return bool(obj.avatar_image)
 
 
 class UserProfileSerializer(serializers.ModelSerializer):
+    avatar_image = serializers.FileField(required=False, allow_empty_file=False)
+
     class Meta:
         model = User
-        fields = ['email', 'username', 'phone', 'role', 'property_cluster', 'avatar']
+        fields = ['email', 'username', 'phone', 'role', 'property_cluster', 'avatar', 'avatar_image']
         read_only_fields = ['email', 'role', 'property_cluster', 'avatar']
+
+    def validate_avatar_image(self, uploaded_file):
+        if uploaded_file.size > 5 * 1024 * 1024:
+            raise serializers.ValidationError('Profile photos must be 5 MB or smaller.')
+        signature = uploaded_file.read(12)
+        uploaded_file.seek(0)
+        if not (
+            signature.startswith(b'\xff\xd8\xff')
+            or signature.startswith(b'\x89PNG\r\n\x1a\n')
+            or (signature.startswith(b'RIFF') and signature[8:12] == b'WEBP')
+        ):
+            raise serializers.ValidationError('Upload a valid JPEG, PNG, or WebP image.')
+        return uploaded_file
 
     def validate_phone(self, value):
         if value and User.objects.filter(phone=value).exclude(pk=self.instance.pk).exists():
@@ -120,9 +140,6 @@ class LoginSerializer(serializers.Serializer):
 
 
 class UserAccessSerializer(serializers.ModelSerializer):
-    assigned_units = serializers.PrimaryKeyRelatedField(
-        many=True, queryset=Unit.objects.all(), required=False,
-    )
     managed_properties = serializers.PrimaryKeyRelatedField(
         many=True, queryset=Property.objects.all(), required=False, write_only=True,
     )
@@ -217,9 +234,6 @@ class TeamMemberOnboardingSerializer(serializers.Serializer):
     password = serializers.CharField(write_only=True, min_length=8)
     phone = serializers.CharField(max_length=20, required=False, allow_blank=True)
     role = serializers.ChoiceField(choices=[('staff', 'Staff'), ('maintenance', 'Maintenance')])
-    assigned_units = serializers.PrimaryKeyRelatedField(
-        many=True, queryset=Unit.objects.all(), required=False,
-    )
 
     def validate_username(self, value):
         if User.objects.filter(username=value).exists():
@@ -236,22 +250,13 @@ class TeamMemberOnboardingSerializer(serializers.Serializer):
             raise serializers.ValidationError('An account with this phone number already exists.')
         return value
 
-    def validate_assigned_units(self, value):
-        manager = self.context['request'].user
-        if any(unit.property.owner_id != manager.id for unit in value):
-            raise serializers.ValidationError('Only units in properties you manage can be assigned.')
-        return value
-
-    def validate(self, attrs):
-        if attrs['role'] == 'staff' and not attrs.get('assigned_units'):
-            raise serializers.ValidationError({'assigned_units': 'Assign at least one unit to this staff account.'})
-        return attrs
-
     def create(self, validated_data):
         password = validated_data.pop('password')
-        assigned_units = validated_data.pop('assigned_units', [])
-        user = User.objects.create_user(password=password, **validated_data)
-        user.assigned_units.set(assigned_units)
+        user = User.objects.create_user(
+            password=password,
+            onboarded_by=self.context['request'].user,
+            **validated_data,
+        )
         return user
 
 
@@ -283,10 +288,26 @@ class TenantInvitationSerializer(serializers.Serializer):
         return tenant
 
 
-class CommunicationContactSerializer(serializers.ModelSerializer):
+class PublicUserSerializer(serializers.ModelSerializer):
+    has_avatar = serializers.SerializerMethodField()
+
     class Meta:
         model = User
-        fields = ['id', 'username', 'role']
+        fields = ['id', 'username', 'role', 'phone', 'property_cluster', 'has_avatar']
+
+    def get_has_avatar(self, obj):
+        return bool(obj.avatar_image)
+
+
+class CommunicationContactSerializer(serializers.ModelSerializer):
+    has_avatar = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'role', 'has_avatar']
+
+    def get_has_avatar(self, obj):
+        return bool(obj.avatar_image)
 
 
 class ConversationSerializer(serializers.ModelSerializer):
@@ -316,17 +337,26 @@ class TenancyEventSerializer(serializers.ModelSerializer):
     unit_number = serializers.CharField(source='unit.unit_number', read_only=True)
     property_name = serializers.CharField(source='unit.property.name', read_only=True)
     recorded_by_name = serializers.CharField(source='recorded_by.username', read_only=True)
+    tenant_user_id = serializers.SerializerMethodField()
+    tenant_has_avatar = serializers.SerializerMethodField()
     evidence_photo = serializers.SerializerMethodField()
     evidence_upload = serializers.FileField(write_only=True, required=False, allow_empty_file=False)
 
     class Meta:
         model = TenancyEvent
         fields = [
-            'id', 'tenant', 'tenant_name', 'unit', 'unit_number', 'property_name',
+            'id', 'tenant', 'tenant_name', 'tenant_user_id', 'tenant_has_avatar',
+            'unit', 'unit_number', 'property_name',
             'action', 'recorded_by', 'recorded_by_name', 'recorded_at', 'notes',
             'evidence_photo', 'evidence_upload',
         ]
         read_only_fields = ['id', 'recorded_by', 'recorded_by_name', 'recorded_at']
+
+    def get_tenant_user_id(self, obj):
+        return obj.tenant.user_id
+
+    def get_tenant_has_avatar(self, obj):
+        return bool(obj.tenant.user_id and obj.tenant.user.avatar_image)
 
     def get_evidence_photo(self, obj):
         return bool(obj.evidence_photo)
@@ -433,13 +463,34 @@ class TenantSerializer(serializers.ModelSerializer):
     unit_number = serializers.CharField(source='unit.unit_number', read_only=True)
     account_email = serializers.EmailField(write_only=True, required=False, allow_blank=True)
     account_linked = serializers.SerializerMethodField()
+    account_user_id = serializers.IntegerField(source='user_id', read_only=True, allow_null=True)
+    account_has_avatar = serializers.SerializerMethodField()
+    invitation_email = serializers.SerializerMethodField()
+    invitation_expires_at = serializers.SerializerMethodField()
 
     class Meta:
         model = Tenant
-        fields = ['id', 'name', 'phone', 'property', 'property_name', 'unit', 'unit_number', 'lease_end', 'rent', 'status', 'created_at', 'account_email', 'account_linked']
+        fields = ['id', 'name', 'phone', 'property', 'property_name', 'unit', 'unit_number', 'lease_end', 'rent', 'status', 'created_at', 'account_email', 'account_linked', 'account_user_id', 'account_has_avatar', 'invitation_email', 'invitation_expires_at']
 
     def get_account_linked(self, obj):
         return obj.user_id is not None
+
+    def get_account_has_avatar(self, obj):
+        return bool(obj.user_id and obj.user.avatar_image)
+
+    def _active_invitation(self, obj):
+        invitation = getattr(obj, 'invitation', None)
+        if invitation and invitation.accepted_at is None and invitation.expires_at > timezone.now():
+            return invitation
+        return None
+
+    def get_invitation_email(self, obj):
+        invitation = getattr(obj, 'invitation', None)
+        return invitation.email if invitation else ''
+
+    def get_invitation_expires_at(self, obj):
+        invitation = self._active_invitation(obj)
+        return invitation.expires_at if invitation else None
 
     def validate_account_email(self, value):
         if not value:
@@ -499,14 +550,23 @@ class NoticeSerializer(serializers.ModelSerializer):
 class MaintenanceJobSerializer(serializers.ModelSerializer):
     property_name = serializers.CharField(source='property.name', read_only=True)
     unit_number = serializers.CharField(source='unit.unit_number', read_only=True)
+    reported_by_user_id = serializers.SerializerMethodField()
+    reported_by_has_avatar = serializers.SerializerMethodField()
 
     class Meta:
         model = MaintenanceJob
         fields = [
             'id', 'job_id', 'property', 'property_name', 'unit', 'unit_number', 'issue',
-            'priority', 'reported_by', 'assignee', 'status', 'quote_amount', 'quote_notes',
+            'priority', 'reported_by', 'reported_by_user_id', 'reported_by_has_avatar',
+            'assignee', 'status', 'quote_amount', 'quote_notes',
             'confirmation_photo_url', 'date',
         ]
+
+    def get_reported_by_user_id(self, obj):
+        return obj.reported_by_user_id
+
+    def get_reported_by_has_avatar(self, obj):
+        return bool(obj.reported_by_user and obj.reported_by_user.avatar_image)
 
     def validate(self, attrs):
         property_value = attrs.get('property', getattr(self.instance, 'property', None))

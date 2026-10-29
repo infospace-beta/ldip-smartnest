@@ -33,6 +33,7 @@ from .serializers import (
     TeamMemberOnboardingSerializer, TenantInvitationSerializer,
     CommunicationContactSerializer, ConversationSerializer, MessageSerializer,
     StartConversationSerializer, CreateMessageSerializer, TenancyEventSerializer,
+    PublicUserSerializer,
     PasswordChangeSerializer, PasswordResetConfirmSerializer,
     PasswordResetRequestSerializer,
     MaintenanceVendorUpdateSerializer,
@@ -96,8 +97,8 @@ def manager_scope(queryset, user):
 def apply_staff_cluster(queryset, user, lookup):
     if user.role != 'staff':
         return queryset
-    unit_ids = user.assigned_units.values_list('id', flat=True)
-    if not unit_ids.exists():
+    unit_ids = staff_unit_ids(user)
+    if not unit_ids:
         return queryset.none()
     model_lookups = {
         Property: 'units__id__in',
@@ -114,6 +115,23 @@ def apply_staff_cluster(queryset, user, lookup):
     return queryset.filter(**{unit_lookup: unit_ids}).distinct()
 
 
+def staff_unit_ids(user):
+    """Units a staff member can work with.
+
+    Staff inherit the portfolio of the manager who onboarded them, while any
+    explicit unit assignments made by an administrator are also respected.
+    """
+    if user.role != 'staff':
+        return set()
+    unit_ids = set(user.assigned_units.values_list('id', flat=True))
+    manager = user.onboarded_by
+    if manager and manager.role == 'manager':
+        unit_ids.update(
+            Unit.objects.filter(property__owner_id=manager.pk).values_list('id', flat=True)
+        )
+    return unit_ids
+
+
 def can_contact(sender, recipient):
     if sender.pk == recipient.pk or not recipient.is_active or not recipient.is_active_user:
         return False
@@ -125,6 +143,7 @@ def can_contact(sender, recipient):
             and (
                 Tenant.objects.filter(user=recipient, property__owner=sender).exists()
                 or recipient.assigned_units.filter(property__owner=sender).exists()
+                or recipient.onboarded_by_id == sender.id
                 or MaintenanceJob.objects.filter(
                     property__owner=sender,
                     assignee__in=[recipient.username, recipient.email],
@@ -138,7 +157,7 @@ def can_contact(sender, recipient):
         if recipient.role == 'manager':
             return tenant.property.owner_id == recipient.id
         if recipient.role == 'staff':
-            return recipient.assigned_units.filter(pk=tenant.unit_id).exists()
+            return tenant.unit_id in staff_unit_ids(recipient)
         if recipient.role == 'maintenance':
             return MaintenanceJob.objects.filter(
                 reported_by_user=sender,
@@ -146,14 +165,18 @@ def can_contact(sender, recipient):
             ).exists()
         return False
     if sender.role == 'staff':
-        assigned_unit_ids = sender.assigned_units.values_list('id', flat=True)
+        unit_ids = staff_unit_ids(sender)
         if recipient.role == 'manager':
-            return sender.assigned_units.filter(property__owner=recipient).exists()
+            return (
+                sender.onboarded_by_id == recipient.id
+                or Property.objects.filter(owner=recipient, units__id__in=unit_ids).exists()
+                or sender.assigned_units.filter(property__owner=recipient).exists()
+            )
         if recipient.role == 'tenant':
-            return Tenant.objects.filter(user=recipient, unit_id__in=assigned_unit_ids).exists()
+            return Tenant.objects.filter(user=recipient, unit_id__in=unit_ids).exists()
         if recipient.role == 'maintenance':
             return MaintenanceJob.objects.filter(
-                unit_id__in=assigned_unit_ids,
+                unit_id__in=unit_ids,
                 assignee__in=[recipient.username, recipient.email],
             ).exists()
         return False
@@ -162,10 +185,19 @@ def can_contact(sender, recipient):
         if recipient.role == 'manager':
             return jobs.filter(property__owner=recipient).exists()
         if recipient.role == 'staff':
-            return jobs.filter(unit_id__in=recipient.assigned_units.values_list('id', flat=True)).exists()
+            return jobs.filter(unit_id__in=staff_unit_ids(recipient)).exists()
         if recipient.role == 'tenant':
             return jobs.filter(reported_by_user=recipient).exists()
     return False
+
+
+def can_view_user(viewer, target):
+    return (
+        viewer.pk == target.pk
+        or viewer.role == 'admin'
+        or can_contact(viewer, target)
+        or can_contact(target, viewer)
+    )
 
 
 def forbidden():
@@ -194,11 +226,15 @@ def register(request):
 @api_view(['POST'])
 @permission_classes([SmartNestAuthenticated])
 def create_tenant_invitation(request, pk):
-    if request.user.role != 'manager':
+    if request.user.role not in ('manager', 'staff'):
         return forbidden()
-    try:
-        tenant = Tenant.objects.get(pk=pk, property__owner=request.user)
-    except Tenant.DoesNotExist:
+    tenants = Tenant.objects.select_related('property', 'unit')
+    if request.user.role == 'manager':
+        tenants = tenants.filter(property__owner=request.user)
+    else:
+        tenants = tenants.filter(unit_id__in=staff_unit_ids(request.user))
+    tenant = tenants.filter(pk=pk).first()
+    if not tenant:
         return Response({'error': 'Tenant not found.'}, status=status.HTTP_404_NOT_FOUND)
     serializer = TenantInvitationSerializer(
         data=request.data,
@@ -212,6 +248,47 @@ def create_tenant_invitation(request, pk):
         'email': tenant.invitation.email,
         'expires_at': tenant.invitation.expires_at,
     }, status=status.HTTP_201_CREATED)
+
+
+@api_view(['GET'])
+@permission_classes([SmartNestAuthenticated])
+def user_public_profile(request, pk):
+    try:
+        target = User.objects.get(pk=pk, is_active=True, is_active_user=True)
+    except User.DoesNotExist:
+        return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+    if not can_view_user(request.user, target):
+        return forbidden()
+    return Response(PublicUserSerializer(target).data)
+
+
+@api_view(['GET'])
+@permission_classes([SmartNestAuthenticated])
+def user_avatar(request, pk):
+    try:
+        target = User.objects.get(pk=pk, is_active=True, is_active_user=True)
+    except User.DoesNotExist:
+        return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+    if not can_view_user(request.user, target):
+        return forbidden()
+    if not target.avatar_image:
+        return Response({'error': 'No profile photo is available.'}, status=status.HTTP_404_NOT_FOUND)
+    photo = target.avatar_image.open('rb')
+    signature = photo.read(12)
+    photo.seek(0)
+    if signature.startswith(b'\xff\xd8\xff'):
+        content_type = 'image/jpeg'
+    elif signature.startswith(b'\x89PNG\r\n\x1a\n'):
+        content_type = 'image/png'
+    elif signature.startswith(b'RIFF') and signature[8:12] == b'WEBP':
+        content_type = 'image/webp'
+    else:
+        photo.close()
+        return Response({'error': 'The stored profile photo is invalid.'}, status=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
+    response = FileResponse(photo, content_type=content_type)
+    response['Cache-Control'] = 'private, no-store'
+    response['X-Content-Type-Options'] = 'nosniff'
+    return response
 
 
 @api_view(['GET'])
@@ -607,7 +684,10 @@ def tenants_list(request):
             return forbidden()
         if request.user.role not in ('manager', 'staff', 'tenant'):
             return Response([]) if request.user.role == 'maintenance' else forbidden()
-        tenants = manager_scope(Tenant.objects.all(), request.user)
+        tenants = manager_scope(
+            Tenant.objects.select_related('property', 'unit', 'user', 'invitation'),
+            request.user,
+        )
         if request.user.role == 'tenant':
             tenants = tenants.filter(user=request.user)
         tenants = apply_staff_cluster(tenants, request.user, 'property__cluster')
@@ -678,7 +758,7 @@ def maintenance_list(request):
     if request.method == 'GET':
         if request.user.role not in ('manager', 'staff', 'maintenance', 'tenant'):
             return forbidden()
-        jobs = MaintenanceJob.objects.all()
+        jobs = MaintenanceJob.objects.select_related('property', 'unit', 'reported_by_user')
         if request.user.role == 'tenant':
             jobs = jobs.filter(reported_by_user=request.user)
         elif request.user.role == 'maintenance':
@@ -718,7 +798,7 @@ def maintenance_list(request):
             return forbidden()
         if request.user.role == 'staff':
             unit = serializer.validated_data.get('unit')
-            if not unit or not request.user.assigned_units.filter(pk=unit.pk).exists():
+            if not unit or unit.pk not in staff_unit_ids(request.user):
                 return forbidden()
         serializer.save()
         return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -730,11 +810,11 @@ def maintenance_list(request):
 def maintenance_detail(request, pk):
     if request.user.role not in ('manager', 'staff', 'maintenance', 'tenant'):
         return forbidden()
-    jobs = MaintenanceJob.objects.all()
+    jobs = MaintenanceJob.objects.select_related('property', 'unit', 'reported_by_user')
     if request.user.role == 'manager':
         jobs = manager_scope(jobs, request.user)
     elif request.user.role == 'staff':
-        jobs = jobs.filter(unit__in=request.user.assigned_units.all())
+        jobs = jobs.filter(unit_id__in=staff_unit_ids(request.user))
     elif request.user.role == 'maintenance':
         jobs = jobs.filter(assignee__in=[request.user.username, request.user.email])
     elif request.user.role == 'tenant':
@@ -770,11 +850,13 @@ def tenancy_events(request):
         return forbidden()
     if request.method == 'GET':
         events = manager_scope(
-            TenancyEvent.objects.select_related('tenant', 'unit', 'unit__property', 'recorded_by'),
+            TenancyEvent.objects.select_related(
+                'tenant', 'tenant__user', 'unit', 'unit__property', 'recorded_by',
+            ),
             request.user,
         )
         if request.user.role == 'staff':
-            events = events.filter(unit__in=request.user.assigned_units.all())
+            events = events.filter(unit_id__in=staff_unit_ids(request.user))
         return Response(TenancyEventSerializer(events, many=True).data)
 
     serializer = TenancyEventSerializer(data=request.data)
@@ -784,7 +866,7 @@ def tenancy_events(request):
     unit = serializer.validated_data['unit']
     if unit.property.owner_id != request.user.id and request.user.role == 'manager':
         return forbidden()
-    if request.user.role == 'staff' and not request.user.assigned_units.filter(pk=unit.pk).exists():
+    if request.user.role == 'staff' and unit.pk not in staff_unit_ids(request.user):
         return forbidden()
 
     with transaction.atomic():
@@ -837,7 +919,7 @@ def tenancy_event_photo(request, pk):
         return forbidden()
     events = manager_scope(TenancyEvent.objects.all(), request.user)
     if request.user.role == 'staff':
-        events = events.filter(unit__in=request.user.assigned_units.all())
+        events = events.filter(unit_id__in=staff_unit_ids(request.user))
     try:
         event = events.get(pk=pk)
     except TenancyEvent.DoesNotExist:
@@ -952,7 +1034,7 @@ def unit_inspections_list(request):
         ):
             return forbidden()
         if request.user.role == 'staff':
-            if not request.user.assigned_units.filter(pk=serializer.validated_data['unit'].id).exists():
+            if serializer.validated_data['unit'].pk not in staff_unit_ids(request.user):
                 return forbidden()
         serializer.save()
         return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -985,7 +1067,7 @@ def unit_inspection_detail(request, pk):
                 return forbidden()
             if request.user.role == 'staff':
                 unit = serializer.validated_data['unit']
-                if not request.user.assigned_units.filter(pk=unit.id).exists():
+                if unit.pk not in staff_unit_ids(request.user):
                     return forbidden()
             serializer.save()
             return Response(serializer.data)

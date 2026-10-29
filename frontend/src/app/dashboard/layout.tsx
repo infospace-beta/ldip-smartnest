@@ -6,6 +6,7 @@ import { Suspense } from "react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import Icon from "@/components/Icon";
+import UserAvatar from "@/components/UserAvatar";
 
 type NavItem = { label: string; href: string; icon: string; roles: string[]; section: string };
 
@@ -27,10 +28,6 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Help & support", href: "/dashboard/help", icon: "help", roles: ["admin", "manager", "tenant", "staff", "maintenance"], section: "Account" },
   { label: "My profile", href: "/dashboard/profile", icon: "profile", roles: ["admin", "manager", "tenant", "staff", "maintenance"], section: "Account" },
 ];
-
-function initials(name: string) {
-  return name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase() ?? "").join("");
-}
 
 function roleLabel(role: string) {
   const labels: Record<string, string> = {
@@ -54,7 +51,7 @@ function DashboardShell({ children }: { children: ReactNode }) {
   const currentItem = NAV_ITEMS.find((item) => item.href === pathname);
   const activeItem = currentItem && currentItem.roles.includes(role) ? currentItem : visibleItems[0];
   const displayName = user?.username || user?.email || "SmartNest user";
-  const avatar = initials(user?.username || user?.email || "S") || "S";
+  const avatarName = user?.username || user?.email || "S";
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) router.replace("/login");
@@ -130,7 +127,7 @@ function DashboardShell({ children }: { children: ReactNode }) {
             <button className="icon-button" aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`} onClick={toggleTheme}><Icon name={theme === "dark" ? "sun" : "theme"} /></button>
             <Link className="button button-secondary button-compact password-shortcut" href="/dashboard/profile#password">Change password</Link>
             <div className="topbar-profile">
-              <span className="user-avatar">{avatar}</span>
+              <UserAvatar userId={user?.id} hasAvatar={user?.has_avatar} name={avatarName} className="user-avatar" />
               <span className="topbar-profile-copy"><span className="user-name">{displayName}</span><span className="user-role">{roleLabel(role)}</span></span>
             </div>
             <button className="icon-button" aria-label="Sign out" onClick={logout}><Icon name="logout" /></button>

@@ -14,6 +14,11 @@ from .models import MaintenanceJob, Payment, Property, Tenant, TenantInvitation,
 
 class TenantAccessTests(TestCase):
     def setUp(self):
+        self.media_directory = tempfile.TemporaryDirectory()
+        self.media_settings = override_settings(MEDIA_ROOT=self.media_directory.name)
+        self.media_settings.enable()
+        self.addCleanup(self.media_settings.disable)
+        self.addCleanup(self.media_directory.cleanup)
         self.client = APIClient()
         self.tenant_user = User.objects.create_user(
             username='jane',
@@ -304,6 +309,88 @@ class TenantAccessTests(TestCase):
                     404,
                 )
 
+    def test_tenant_profile_photo_is_uploadable_and_private_to_connected_users(self):
+        manager = User.objects.create_user(
+            username='profile-manager',
+            email='profile-manager@example.com',
+            password='secure-password',
+            role='manager',
+        )
+        self.property.owner = manager
+        self.property.save(update_fields=['owner'])
+        image = SimpleUploadedFile(
+            'profile.png',
+            b'\x89PNG\r\n\x1a\n' + b'\x00' * 8,
+            content_type='image/png',
+        )
+        upload = self.client.patch(
+            '/api/auth/me/',
+            {'avatar_image': image},
+            format='multipart',
+        )
+        self.assertEqual(upload.status_code, 200, upload.data)
+        self.assertTrue(upload.data['has_avatar'])
+
+        manager_client = APIClient()
+        manager_client.force_authenticate(user=manager)
+        response = manager_client.get(f'/api/users/{self.tenant_user.id}/avatar/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'image/png')
+        self.assertIn(b'\x89PNG', b''.join(response.streaming_content))
+
+        unrelated = User.objects.create_user(
+            username='unrelated-viewer',
+            email='unrelated-viewer@example.com',
+            password='secure-password',
+            role='manager',
+        )
+        unrelated_client = APIClient()
+        unrelated_client.force_authenticate(user=unrelated)
+        self.assertEqual(
+            unrelated_client.get(f'/api/users/{self.tenant_user.id}/avatar/').status_code,
+            403,
+        )
+
+    def test_assigned_staff_can_create_a_tenant_invitation_link(self):
+        staff_user = User.objects.create_user(
+            username='inviting-staff',
+            email='inviting-staff@example.com',
+            password='secure-password',
+            role='staff',
+        )
+        staff_user.assigned_units.add(self.unit)
+        self.tenant.user = None
+        self.tenant.save(update_fields=['user'])
+        client = APIClient()
+        client.force_authenticate(user=staff_user)
+
+        response = client.post(
+            f'/api/tenants/{self.tenant.id}/invite/',
+            {'email': 'new-jane@example.com'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        details = self.client.get(f"/api/tenant-invitations/{response.data['token']}/")
+        self.assertEqual(details.status_code, 200)
+        self.assertEqual(details.data['email'], 'new-jane@example.com')
+
+        other_staff = User.objects.create_user(
+            username='other-staff',
+            email='other-staff@example.com',
+            password='secure-password',
+            role='staff',
+        )
+        other_client = APIClient()
+        other_client.force_authenticate(user=other_staff)
+        self.assertEqual(
+            other_client.post(
+                f'/api/tenants/{self.tenant.id}/invite/',
+                {'email': 'new-jane@example.com'},
+                format='json',
+            ).status_code,
+            404,
+        )
+
 
 class MaintenanceVendorTests(TestCase):
     def test_vendor_updates_only_assigned_work_orders_and_needs_photo_to_complete(self):
@@ -512,7 +599,7 @@ class TenantRegistrationTests(TestCase):
                 {'email': 'another@example.com'},
                 format='json',
             ).status_code,
-            403,
+            404,
         )
         client.force_authenticate(user=manager)
 
@@ -684,6 +771,25 @@ class RoleAndCommunicationTests(TestCase):
         )
         self.assertEqual(self.client.get('/api/users/').status_code, 403)
 
+    def test_admin_can_assign_units_directly_to_staff(self):
+        staff_user = User.objects.create_user(
+            username='direct-staff',
+            email='direct-staff@example.com',
+            password='secure-password',
+            role='staff',
+        )
+        self.client.force_authenticate(user=self.admin)
+        response = self.client.patch(
+            f'/api/users/{staff_user.id}/',
+            {'assigned_units': [self.unit.id]},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(
+            list(staff_user.assigned_units.values_list('id', flat=True)),
+            [self.unit.id],
+        )
+
     def test_manager_can_onboard_staff_and_maintenance_only(self):
         self.client.force_authenticate(user=self.manager)
         staff_response = self.client.post(
@@ -693,15 +799,15 @@ class RoleAndCommunicationTests(TestCase):
                 'email': 'new-staff@example.com',
                 'password': 'Staff-password-2',
                 'role': 'staff',
-                'assigned_units': [self.unit.id],
             },
             format='json',
         )
         self.assertEqual(staff_response.status_code, 201, staff_response.data)
         staff_user = User.objects.get(email='new-staff@example.com')
         self.assertEqual(staff_user.role, 'staff')
+        self.assertEqual(staff_user.onboarded_by_id, self.manager.id)
         self.assertTrue(staff_user.check_password('Staff-password-2'))
-        self.assertEqual(list(staff_user.assigned_units.values_list('id', flat=True)), [self.unit.id])
+        self.assertFalse(staff_user.assigned_units.exists())
 
         maintenance_response = self.client.post(
             '/api/team/onboarding/',
@@ -738,6 +844,123 @@ class RoleAndCommunicationTests(TestCase):
 
         self.client.force_authenticate(user=self.admin)
         self.assertEqual(self.client.get('/api/communication/conversations/').data, [])
+
+    def test_shared_scope_and_public_profiles_follow_role_access(self):
+        other_property = Property.objects.create(name='Hidden Court', location='Nairobi')
+        other_unit = Unit.objects.create(
+            property=other_property,
+            unit_number='Z-1',
+            unit_type='Studio',
+            rent='12000',
+        )
+        staff_user = User.objects.create_user(
+            username='portfolio-staff',
+            email='portfolio-staff@example.com',
+            password='secure-password',
+            role='staff',
+            onboarded_by=self.manager,
+        )
+        client = APIClient()
+        client.force_authenticate(user=staff_user)
+
+        properties = client.get('/api/properties/')
+        tenants = client.get('/api/tenants/')
+        self.assertEqual(properties.status_code, 200)
+        self.assertEqual([item['name'] for item in properties.data], ['Green Court'])
+        self.assertEqual([item['name'] for item in tenants.data], ['Tenant User'])
+        self.assertEqual(client.get('/api/payments/').status_code, 403)
+        self.assertEqual(client.get('/api/expenses/').status_code, 403)
+        self.assertEqual(client.get(f'/api/properties/{other_property.id}/').status_code, 404)
+        self.assertEqual(
+            client.get(f'/api/units/').data[0]['unit_number'],
+            'A-1',
+        )
+
+        profile = client.get(f'/api/users/{self.tenant.id}/profile/')
+        self.assertEqual(profile.status_code, 200)
+        self.assertEqual(profile.data['username'], 'tenant')
+        self.assertEqual(profile.data['role'], 'tenant')
+        self.assertIn('phone', profile.data)
+        self.assertNotIn('email', profile.data)
+
+        maintenance = User.objects.create_user(
+            username='daily-maintenance',
+            email='daily-maintenance@example.com',
+            password='secure-password',
+            role='maintenance',
+            onboarded_by=self.manager,
+        )
+        client.force_authenticate(user=maintenance)
+        self.assertEqual(client.get('/api/tenants/').data, [])
+        self.assertEqual(client.get('/api/properties/').status_code, 403)
+        self.assertEqual(client.get('/api/payments/').status_code, 403)
+        no_jobs = client.get('/api/maintenance/')
+        self.assertEqual(no_jobs.status_code, 200)
+        self.assertEqual(no_jobs.data, [])
+        self.assertEqual(
+            client.get(f'/api/users/{self.tenant.id}/profile/').status_code,
+            403,
+        )
+
+    def test_tenant_invitation_details_are_exposed_to_the_managing_team(self):
+        tenant_record = Tenant.objects.get(user=self.tenant)
+        tenant_record.user = None
+        tenant_record.save(update_fields=['user'])
+        self.client.force_authenticate(user=self.manager)
+        response = self.client.post(
+            f'/api/tenants/{tenant_record.id}/invite/',
+            {'email': 'returning@example.com'},
+            format='json',
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        tenant_row = self.client.get('/api/tenants/').data[0]
+        self.assertEqual(tenant_row['invitation_email'], 'returning@example.com')
+        self.assertIsNotNone(tenant_row['invitation_expires_at'])
+        self.assertEqual(tenant_row['account_user_id'], None)
+        self.assertFalse(tenant_row['account_linked'])
+
+    def test_staff_can_invite_tenants_only_inside_their_inherited_portfolio(self):
+        tenant_record = Tenant.objects.get(user=self.tenant)
+        tenant_record.user = None
+        tenant_record.save(update_fields=['user'])
+        staff_user = User.objects.create_user(
+            username='invite-staff',
+            email='invite-staff@example.com',
+            password='secure-password',
+            role='staff',
+            onboarded_by=self.manager,
+        )
+        client = APIClient()
+        client.force_authenticate(user=staff_user)
+
+        allowed = client.post(
+            f'/api/tenants/{tenant_record.id}/invite/',
+            {'email': 'returning@example.com'},
+            format='json',
+        )
+        self.assertEqual(allowed.status_code, 201, allowed.data)
+
+        other_property = Property.objects.create(name='Hidden Court', location='Nairobi')
+        other_unit = Unit.objects.create(
+            property=other_property,
+            unit_number='Z-1',
+            unit_type='Studio',
+            rent='12000',
+        )
+        hidden_tenant = Tenant.objects.create(
+            name='Hidden Tenant',
+            phone='0722222222',
+            property=other_property,
+            unit=other_unit,
+            lease_end='2027-01-31',
+            rent='12000',
+        )
+        denied = client.post(
+            f'/api/tenants/{hidden_tenant.id}/invite/',
+            {'email': 'hidden@example.com'},
+            format='json',
+        )
+        self.assertEqual(denied.status_code, 404)
 
 
 class AccountSecurityTests(TestCase):

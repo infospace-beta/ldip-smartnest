@@ -15,10 +15,18 @@ class User(AbstractUser):
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='tenant')
     phone = models.CharField(max_length=20, blank=True)
     avatar = models.CharField(max_length=10, blank=True, default='U')
+    avatar_image = models.FileField(upload_to='profile-photos/%Y/%m/', blank=True)
     property_cluster = models.CharField(max_length=100, blank=True)
     is_active_user = models.BooleanField(default=True)
     portal_access_granted = models.BooleanField(default=False)
     registration_consent_at = models.DateTimeField(null=True, blank=True)
+    onboarded_by = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='onboarded_team_members',
+    )
     assigned_units = models.ManyToManyField('Unit', related_name='assigned_users', blank=True)
 
     USERNAME_FIELD = 'email'

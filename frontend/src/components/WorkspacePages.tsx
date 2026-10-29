@@ -9,6 +9,7 @@ import {
   communicationAPI,
   dashboardAPI,
   expensesAPI,
+  getApiErrorMessage,
   healthAPI,
   maintenanceAPI,
   noticesAPI,
@@ -29,6 +30,7 @@ import {
   type Notice,
   type Payment,
   type Property,
+  type PublicUser,
   type Tenant,
   type TenancyEvent,
   type UserAccess,
@@ -36,6 +38,7 @@ import {
 } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import Icon from "@/components/Icon";
+import UserAvatar from "@/components/UserAvatar";
 
 type DataRow = Record<string, unknown>;
 type References = Record<string, DataRow[]>;
@@ -328,7 +331,7 @@ const PAGE_CONFIGS: Record<string, PageConfig> = {
   },
   maintenance: {
     title: "Maintenance", eyebrow: "Operations", description: "Track service work orders, priority and resolution status.", icon: "maintenance",
-    columns: [{ key: "job_id", label: "Work order" }, { key: "property_name", label: "Property" }, { key: "unit_number", label: "Unit" }, { key: "issue", label: "Issue" }, { key: "priority", label: "Priority" }, { key: "assignee", label: "Assigned to" }, { key: "status", label: "Status" }, { key: "quote_amount", label: "Quote" }, { key: "confirmation_photo_url", label: "Completion photo" }],
+    columns: [{ key: "job_id", label: "Work order" }, { key: "property_name", label: "Property" }, { key: "unit_number", label: "Unit" }, { key: "issue", label: "Issue" }, { key: "reported_by", label: "Reported by" }, { key: "priority", label: "Priority" }, { key: "assignee", label: "Assigned to" }, { key: "status", label: "Status" }, { key: "quote_amount", label: "Quote" }, { key: "confirmation_photo_url", label: "Completion photo" }],
     load: async () => {
       const [jobs, properties, units] = await Promise.all([maintenanceAPI.list(), propertiesAPI.list(), unitsAPI.list()]);
       return { rows: rowsOf(jobs.data), references: { properties: rowsOf(properties.data), units: rowsOf(units.data) } };
@@ -410,6 +413,62 @@ function PageHeader({ title, eyebrow, description, icon, actions }: { title: str
         <p className="page-description">{description}</p>
       </div>
       {actions && <div className="page-actions">{actions}</div>}
+    </div>
+  );
+}
+
+function PublicProfileDialog({
+  userId,
+  name,
+  hasAvatar,
+  onClose,
+}: {
+  userId: number;
+  name: string;
+  hasAvatar?: boolean;
+  onClose: () => void;
+}) {
+  const router = useRouter();
+  const { user } = useAuth();
+  const [profile, setProfile] = useState<PublicUser | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    usersAPI.profile(userId)
+      .then(({ data }) => { if (active) setProfile(data); })
+      .catch(() => { if (active) setError("This profile could not be loaded or is outside your access scope."); });
+    return () => { active = false; };
+  }, [userId]);
+
+  return (
+    <div className="profile-overlay" role="presentation" onClick={onClose}>
+      <section className="panel tenant-profile-dialog public-profile-dialog" role="dialog" aria-modal="true" aria-labelledby="public-profile-title" onClick={(event) => event.stopPropagation()}>
+        <button className="button button-secondary button-compact tenant-profile-close" type="button" onClick={onClose}>Close</button>
+        <div className="tenant-profile-heading">
+          <UserAvatar userId={userId} hasAvatar={profile?.has_avatar ?? hasAvatar} name={profile?.username ?? name} className="profile-avatar" />
+          <div>
+            <div className="page-eyebrow">Contact profile</div>
+            <h2 id="public-profile-title">{profile?.username ?? name}</h2>
+            <p>{roleDisplayName(profile?.role ?? "tenant")}</p>
+          </div>
+        </div>
+        {error ? <div className="error-state" role="alert">{error}</div> : !profile ? (
+          <div className="loading-state" role="status">Loading profile…</div>
+        ) : (
+          <dl className="tenant-profile-details">
+            <div><dt>Phone</dt><dd>{profile.phone ? <a href={`tel:${profile.phone}`}>{profile.phone}</a> : "Not provided"}</dd></div>
+            <div><dt>Role</dt><dd>{roleDisplayName(profile.role)}</dd></div>
+            {profile.property_cluster && <div><dt>Portfolio</dt><dd>{profile.property_cluster}</dd></div>}
+          </dl>
+        )}
+        {profile && profile.id !== user?.id && (
+          <div className="form-actions tenant-profile-actions">
+            <button className="button button-primary" type="button" onClick={() => router.push(`/dashboard/messages?recipient=${userId}`)}><Icon name="notices" />Message</button>
+          </div>
+        )}
+        <p className="panel-description">Only the contact details this person shares for property operations are shown here.</p>
+      </section>
     </div>
   );
 }
@@ -588,6 +647,7 @@ function VendorWorkOrderForm({
 export function RecordsPage({ page }: { page: string }) {
   const config = PAGE_CONFIGS[page];
   const { user } = useAuth();
+  const router = useRouter();
   const userRole = user?.role;
   const [rows, setRows] = useState<DataRow[]>([]);
   const [references, setReferences] = useState<References>({});
@@ -595,6 +655,13 @@ export function RecordsPage({ page }: { page: string }) {
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
+  const [selectedTenant, setSelectedTenant] = useState<DataRow | null>(null);
+  const [selectedProfile, setSelectedProfile] = useState<{ userId: number; name: string; hasAvatar?: boolean } | null>(null);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteUrl, setInviteUrl] = useState("");
+  const [inviteError, setInviteError] = useState("");
+  const [inviteSaving, setInviteSaving] = useState(false);
+  const [inviteCopied, setInviteCopied] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -630,6 +697,26 @@ export function RecordsPage({ page }: { page: string }) {
   const actions = config.forms?.filter((form) => user && form.allowedRoles.includes(user.role)).map((form) => (
     <RecordForm form={form} references={references} onSaved={load} key={form.title} />
   ));
+  const createInviteLink = async () => {
+    if (typeof selectedTenant?.id !== "number" || !inviteEmail.trim()) {
+      setInviteError("Enter the tenant’s email address to create an invitation link.");
+      return;
+    }
+    setInviteSaving(true);
+    setInviteError("");
+    setInviteUrl("");
+    setInviteCopied(false);
+    try {
+      const { data } = await tenantsAPI.invite(selectedTenant.id, inviteEmail.trim());
+      const url = new URL("/join", window.location.origin);
+      url.searchParams.set("token", data.token);
+      setInviteUrl(url.toString());
+    } catch (requestError) {
+      setInviteError(getApiErrorMessage(requestError, "Could not create an invitation link."));
+    } finally {
+      setInviteSaving(false);
+    }
+  };
 
   return (
     <section>
@@ -663,7 +750,29 @@ export function RecordsPage({ page }: { page: string }) {
                       const formatted = displayValue(value, column.key);
                       const className = statusClass(column.key, value);
                       const photoUrl = column.key === "confirmation_photo_url" && typeof value === "string" && value.startsWith("https://") ? value : null;
-                      return <td key={column.key}>{photoUrl ? <a href={photoUrl} target="_blank" rel="noreferrer">View photo</a> : className ? <span className={`status-pill ${className}`}>{formatted.replaceAll("_", " ")}</span> : <span className={cellIndex === 0 ? "table-primary" : ""}>{formatted}</span>}</td>;
+                      return <td key={column.key}>{photoUrl ? <a href={photoUrl} target="_blank" rel="noreferrer">View photo</a> : page === "tenants" && column.key === "name" ? (
+                        <span className="conversation-person">
+                          <UserAvatar
+                            userId={typeof row.account_user_id === "number" ? row.account_user_id : undefined}
+                            hasAvatar={Boolean(row.account_has_avatar)}
+                            name={formatted}
+                            className="user-avatar"
+                          />
+                          <button className="table-primary tenant-profile-trigger" type="button" onClick={() => {
+                            setSelectedTenant(row);
+                            setInviteEmail(String(row.invitation_email ?? ""));
+                            setInviteUrl("");
+                            setInviteError("");
+                            setInviteCopied(false);
+                          }}>{formatted}</button>
+                        </span>
+                      ) : page === "maintenance" && column.key === "reported_by" && typeof row.reported_by_user_id === "number" ? (
+                        <button className="table-primary profile-trigger" type="button" onClick={() => setSelectedProfile({
+                          userId: Number(row.reported_by_user_id),
+                          name: formatted,
+                          hasAvatar: Boolean(row.reported_by_has_avatar),
+                        })}>{formatted}</button>
+                      ) : className ? <span className={`status-pill ${className}`}>{formatted.replaceAll("_", " ")}</span> : <span className={cellIndex === 0 ? "table-primary" : ""}>{formatted}</span>}</td>;
                     })}
                     {page === "maintenance" && user?.role === "maintenance" && typeof row.id === "number" && <td><VendorWorkOrderForm jobId={row.id} status={String(row.status ?? "logged")} quoteAmount={typeof row.quote_amount === "number" ? row.quote_amount : null} quoteNotes={String(row.quote_notes ?? "")} confirmationPhotoUrl={String(row.confirmation_photo_url ?? "")} onSaved={load} /></td>}
                   </tr>
@@ -686,6 +795,71 @@ export function RecordsPage({ page }: { page: string }) {
           </section>
         )}
       </section>
+      {page === "tenants" && selectedTenant && (
+        <div className="profile-overlay" role="presentation" onClick={() => setSelectedTenant(null)}>
+          <section className="panel tenant-profile-dialog" role="dialog" aria-modal="true" aria-labelledby="tenant-profile-title" onClick={(event) => event.stopPropagation()}>
+            <button className="button button-secondary button-compact tenant-profile-close" type="button" onClick={() => setSelectedTenant(null)}>Close</button>
+            <div className="tenant-profile-heading">
+              <UserAvatar
+                userId={typeof selectedTenant.account_user_id === "number" ? selectedTenant.account_user_id : undefined}
+                hasAvatar={Boolean(selectedTenant.account_has_avatar)}
+                name={String(selectedTenant.name ?? "Tenant")}
+                className="profile-avatar"
+              />
+              <div><div className="page-eyebrow">Tenant profile</div><h2 id="tenant-profile-title">{String(selectedTenant.name ?? "Tenant")}</h2><p>{String(selectedTenant.property_name ?? "Property")} · {String(selectedTenant.unit_number ?? "No unit assigned")}</p></div>
+            </div>
+            <dl className="tenant-profile-details">
+              <div><dt>Phone</dt><dd>{String(selectedTenant.phone ?? "—")}</dd></div>
+              <div><dt>Lease status</dt><dd>{String(selectedTenant.status ?? "—").replaceAll("_", " ")}</dd></div>
+              <div><dt>Lease ends</dt><dd>{displayValue(selectedTenant.lease_end, "lease_end")}</dd></div>
+              <div><dt>Monthly rent</dt><dd>{displayValue(selectedTenant.rent, "rent")}</dd></div>
+              <div><dt>Portal account</dt><dd>{selectedTenant.account_linked ? "Linked" : "Not linked"}</dd></div>
+            </dl>
+            {typeof selectedTenant.account_user_id === "number" && (
+              <div className="form-actions tenant-profile-actions">
+                <button className="button button-primary" type="button" onClick={() => router.push(`/dashboard/messages?recipient=${selectedTenant.account_user_id}`)}>Message tenant</button>
+                <button className="button button-secondary" type="button" onClick={() => setSelectedProfile({
+                  userId: Number(selectedTenant.account_user_id),
+                  name: String(selectedTenant.name ?? "Tenant"),
+                  hasAvatar: Boolean(selectedTenant.account_has_avatar),
+                })}>View contact profile</button>
+              </div>
+            )}
+            {!selectedTenant.account_linked && user && ["manager", "staff"].includes(user.role) && (
+              <div className="tenant-invitation-panel">
+                <h3>Share an account invitation</h3>
+                <p className="panel-description">Create a secure, one-time link you can send to the tenant. It expires in 7 days.</p>
+                {Boolean(selectedTenant.invitation_email) && <div className="hint-card">
+                  <strong>{selectedTenant.invitation_expires_at ? "Invitation link ready to resend" : "Previous invitation expired"}</strong>
+                  <span>{selectedTenant.invitation_expires_at
+                    ? `A link was prepared for ${String(selectedTenant.invitation_email)} until ${new Date(String(selectedTenant.invitation_expires_at)).toLocaleString()}. Create a new link to replace it, or copy the email below and generate a fresh one.`
+                    : `The last invitation for ${String(selectedTenant.invitation_email)} has expired. Create a fresh link to send again.`}</span>
+                </div>}
+                <label className="field"><span>Tenant email</span><input type="email" autoComplete="email" value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} placeholder="tenant@example.com" /></label>
+                {inviteError && <div className="form-error" role="alert">{inviteError}</div>}
+                <button className="button button-secondary" type="button" onClick={() => void createInviteLink()} disabled={inviteSaving}>{inviteSaving ? "Creating link…" : selectedTenant.invitation_expires_at ? "Create a new invitation link" : "Create invitation link"}</button>
+                {inviteUrl && <div className="hint-card invite-link-card" role="status">
+                  <strong>Invitation link ready</strong>
+                  <div className="invite-link-controls">
+                    <input aria-label="Tenant invitation link" readOnly value={inviteUrl} onFocus={(event) => event.currentTarget.select()} />
+                    <button className="button button-secondary button-compact" type="button" onClick={() => {
+                      void navigator.clipboard.writeText(inviteUrl).then(() => setInviteCopied(true)).catch(() => setInviteCopied(false));
+                    }}>{inviteCopied ? "Copied" : "Copy link"}</button>
+                  </div>
+                </div>}
+              </div>
+            )}
+          </section>
+        </div>
+      )}
+      {selectedProfile && (
+        <PublicProfileDialog
+          userId={selectedProfile.userId}
+          name={selectedProfile.name}
+          hasAvatar={selectedProfile.hasAvatar}
+          onClose={() => setSelectedProfile(null)}
+        />
+      )}
     </section>
   );
 }
@@ -810,6 +984,7 @@ export function UserAccessPage() {
         icon="staff"
       />
       <div className="hint-card"><strong>Provisioning flow</strong>Users create tenant accounts from the sign-in page. A manager links tenant accounts to records; administrators grant staff, maintenance, manager (landlord), and admin roles here.</div>
+      <div className="hint-card"><strong>Staff access</strong>Staff inherit the portfolio of the manager who onboarded them. Assigning units here adds a direct override for staff who were created before manager onboarding, while maintenance accounts only need work-order assignments.</div>
       <div className="hint-card"><strong>Property ownership</strong>Assign each managed property to its manager here. Managers only see records connected to their assigned properties; unassigned legacy properties remain visible to administrators until assigned.</div>
       {error && <div className="error-state" role="alert"><span>{error}</span><button className="button button-secondary" type="button" onClick={() => void load()}>Try again</button></div>}
       {loading ? <div className="loading-state" role="status">Loading user registry…</div> : !error && (
@@ -826,17 +1001,9 @@ export function UserAccessPage() {
 
 export function TeamOnboardingPage() {
   const [role, setRole] = useState<"staff" | "maintenance">("staff");
-  const [units, setUnits] = useState<Awaited<ReturnType<typeof unitsAPI.list>>["data"]>([]);
-  const [assignedUnits, setAssignedUnits] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
-
-  useEffect(() => {
-    unitsAPI.list()
-      .then(({ data }) => setUnits(data))
-      .catch(() => setError("Could not load your units. Add a property and units before assigning staff."));
-  }, []);
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -852,13 +1019,11 @@ export function TeamOnboardingPage() {
         password: String(form.get("password") ?? ""),
         phone: String(form.get("phone") ?? "").trim(),
         role,
-        assigned_units: role === "staff" ? assignedUnits.map(Number) : [],
       });
       formElement.reset();
-      setAssignedUnits([]);
       setSuccess(`${data.username} has been added as ${role === "staff" ? "staff" : "maintenance"}. Share the initial password with them securely.`);
     } catch {
-      setError("Could not onboard this team member. Check that the email, username, phone, and required unit assignments are valid.");
+      setError("Could not onboard this team member. Check that the email, username, phone, and password are valid.");
     } finally {
       setSaving(false);
     }
@@ -872,6 +1037,10 @@ export function TeamOnboardingPage() {
         description="Create staff and maintenance accounts for the properties you manage. Tenant records can be added under Tenants & leases."
         icon="staff"
       />
+      <div className="hint-card">
+        <strong>What new team members can see</strong>
+        Staff inherit your property portfolio and can work with the tenants, leases, inspections, and work orders connected to your properties. Maintenance accounts only see work orders assigned to them, with the contact details needed to complete each job.
+      </div>
       {error && <div className="error-state" role="alert">{error}</div>}
       {success && <div className="auth-message success" role="status">{success}</div>}
       <section className="panel form-panel">
@@ -901,14 +1070,6 @@ export function TeamOnboardingPage() {
                 <span>Initial password</span>
                 <input name="password" type="password" required minLength={8} autoComplete="new-password" />
               </label>
-              {role === "staff" && (
-                <label className="field field-full">
-                  <span>Assigned units</span>
-                  <select multiple required value={assignedUnits} onChange={(event) => setAssignedUnits(Array.from(event.currentTarget.selectedOptions, (option) => option.value))}>
-                    {units.map((unit) => <option value={String(unit.id)} key={unit.id}>{unit.property_name} · {unit.unit_number}</option>)}
-                  </select>
-                </label>
-              )}
             </div>
             <div className="form-actions"><button className="button button-primary" type="submit" disabled={saving}>{saving ? "Creating account…" : "Create account"}</button></div>
         </form>
@@ -924,9 +1085,11 @@ export function CommunicationsPage() {
   const [messages, setMessages] = useState<Awaited<ReturnType<typeof communicationAPI.messages>>["data"]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [newConversation, setNewConversation] = useState(false);
+  const [selectedRecipient, setSelectedRecipient] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
+  const [selectedProfile, setSelectedProfile] = useState<{ userId: number; name: string; hasAvatar?: boolean } | null>(null);
 
   const loadInbox = useCallback(async () => {
     setLoading(true);
@@ -957,6 +1120,18 @@ export function CommunicationsPage() {
   }, [loadInbox]);
 
   useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const recipient = new URLSearchParams(window.location.search).get("recipient");
+      if (recipient && /^\d+$/.test(recipient)) {
+        setSelectedRecipient(recipient);
+        setNewConversation(true);
+        setSelectedId(null);
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
     if (!selectedId) {
       return;
     }
@@ -984,6 +1159,7 @@ export function CommunicationsPage() {
         setConversations((current) => [result.data, ...current]);
         setSelectedId(result.data.id);
         setNewConversation(false);
+        setSelectedRecipient("");
       } else if (selectedId) {
         await communicationAPI.sendMessage(selectedId, body);
         const { data: updatedMessages } = await communicationAPI.messages(selectedId);
@@ -1008,19 +1184,25 @@ export function CommunicationsPage() {
         eyebrow="Private messages"
         description="Message the people connected to your role and assignments. Only conversation participants can read its messages."
         icon="notices"
-        actions={<button className="button button-primary" type="button" onClick={() => { setNewConversation(true); setSelectedId(null); setMessages([]); }}><Icon name="add" />New message</button>}
+        actions={<button className="button button-primary" type="button" onClick={() => { setNewConversation(true); setSelectedId(null); setSelectedRecipient(""); setMessages([]); }}><Icon name="add" />New message</button>}
       />
       {error && <div className="error-state" role="alert">{error}</div>}
       <div className="communication-grid">
         <aside className="panel conversation-list">
           <h2 className="panel-title">Inbox</h2>
-          {loading ? <div className="loading-state" role="status">Loading…</div> : conversations.length ? conversations.map((item) => (
-            <button type="button" className={`conversation-link ${!newConversation && selectedId === item.id ? "active" : ""}`} key={item.id} onClick={() => { setNewConversation(false); setSelectedId(item.id); }}>
-              <strong>{item.participants.find((participant) => participant.id !== user?.id)?.username ?? "Conversation"}</strong>
-              <span>{item.subject}</span>
-              <small>{item.last_message_preview}</small>
-            </button>
-          )) : <p className="panel-description">No conversations yet. Start a message with someone available to your role.</p>}
+          {loading ? <div className="loading-state" role="status">Loading…</div> : conversations.length ? conversations.map((item) => {
+            const participant = item.participants.find((entry) => entry.id !== user?.id);
+            return (
+              <div className="conversation-item" key={item.id}>
+                <button type="button" className={`conversation-link ${!newConversation && selectedId === item.id ? "active" : ""}`} onClick={() => { setNewConversation(false); setSelectedId(item.id); }}>
+                  <span className="conversation-person"><UserAvatar userId={participant?.id} hasAvatar={participant?.has_avatar} name={participant?.username ?? "Conversation"} className="user-avatar" /><strong>{participant?.username ?? "Conversation"}</strong></span>
+                  <span>{item.subject}</span>
+                  <small>{item.last_message_preview}</small>
+                </button>
+                {participant && <button className="profile-trigger conversation-profile-link" type="button" onClick={() => setSelectedProfile({ userId: participant.id, name: participant.username, hasAvatar: participant.has_avatar })}>View {participant.username}’s profile</button>}
+              </div>
+            );
+          }) : <p className="panel-description">No conversations yet. Start a message with someone available to your role.</p>}
         </aside>
         <section className="panel conversation-thread">
           {newConversation ? (
@@ -1028,7 +1210,7 @@ export function CommunicationsPage() {
               <h2 className="panel-title">New message</h2>
               {contacts.length ? (
                 <form className="message-form" onSubmit={submit}>
-                  <label className="field"><span>To</span><select name="recipient" required defaultValue=""><option value="" disabled>Select a contact</option>{contacts.map((contact) => <option key={contact.id} value={contact.id}>{contact.username} · {roleDisplayName(contact.role)}</option>)}</select></label>
+                  <label className="field"><span>To</span><select name="recipient" required value={selectedRecipient} onChange={(event) => setSelectedRecipient(event.target.value)}><option value="" disabled>Select a contact</option>{contacts.map((contact) => <option key={contact.id} value={contact.id}>{contact.username} · {roleDisplayName(contact.role)}</option>)}</select></label>
                   <label className="field"><span>Subject</span><input name="subject" required maxLength={200} /></label>
                   <label className="field"><span>Message</span><textarea name="body" required rows={5} /></label>
                   <button className="button button-primary" type="submit" disabled={sending}>{sending ? "Sending…" : "Send message"}</button>
@@ -1037,9 +1219,20 @@ export function CommunicationsPage() {
             </>
           ) : selected ? (
             <>
-              <div className="conversation-heading"><div><h2 className="panel-title">{recipientName ?? selected.subject}</h2><p className="panel-description">{selected.subject}</p></div></div>
+              <div className="conversation-heading"><div className="conversation-person">{(() => {
+                const participant = selected.participants.find((entry) => entry.id !== user?.id);
+                return <UserAvatar userId={participant?.id} hasAvatar={participant?.has_avatar} name={participant?.username ?? recipientName ?? selected.subject} className="user-avatar" />;
+              })()}<div><h2 className="panel-title">{(() => {
+                const participant = selected.participants.find((entry) => entry.id !== user?.id);
+                return participant ? <button className="profile-trigger panel-title-trigger" type="button" onClick={() => setSelectedProfile({ userId: participant.id, name: participant.username, hasAvatar: participant.has_avatar })}>{participant.username}</button> : recipientName ?? selected.subject;
+              })()}</h2><p className="panel-description">{selected.subject}</p></div></div></div>
               <div className="message-list" aria-live="polite">
-                {messages.map((message) => <article className={`message-bubble ${message.sender === user?.id ? "mine" : ""}`} key={message.id}><strong>{message.sender_name}</strong><p>{message.body}</p><small>{new Date(message.sent_at).toLocaleString()}</small></article>)}
+                {messages.map((message) => {
+                  const sender = message.sender === user?.id
+                    ? user
+                    : contacts.find((contact) => contact.id === message.sender);
+                  return <article className={`message-bubble ${message.sender === user?.id ? "mine" : ""}`} key={message.id}><span className="conversation-person"><UserAvatar userId={sender?.id} hasAvatar={sender?.has_avatar} name={message.sender_name} className="user-avatar" />{sender ? <button className="profile-trigger" type="button" onClick={() => setSelectedProfile({ userId: sender.id, name: message.sender_name, hasAvatar: sender.has_avatar })}>{message.sender_name}</button> : <strong>{message.sender_name}</strong>}</span><p>{message.body}</p><small>{new Date(message.sent_at).toLocaleString()}</small></article>;
+                })}
               </div>
               <form className="message-reply" onSubmit={submit}><label className="field"><span>Reply</span><textarea name="body" rows={3} required /></label><button className="button button-primary" type="submit" disabled={sending}>{sending ? "Sending…" : "Send reply"}</button></form>
             </>
@@ -1047,6 +1240,14 @@ export function CommunicationsPage() {
         </section>
       </div>
       <p className="privacy-note">Administrators can provision roles, but cannot browse conversations they are not part of.</p>
+      {selectedProfile && (
+        <PublicProfileDialog
+          userId={selectedProfile.userId}
+          name={selectedProfile.name}
+          hasAvatar={selectedProfile.hasAvatar}
+          onClose={() => setSelectedProfile(null)}
+        />
+      )}
     </section>
   );
 }
@@ -1065,6 +1266,7 @@ export function TenancyEventsPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [selectedProfile, setSelectedProfile] = useState<{ userId: number; name: string; hasAvatar?: boolean } | null>(null);
 
   useEffect(() => () => {
     if (evidencePreview) URL.revokeObjectURL(evidencePreview);
@@ -1129,7 +1331,7 @@ export function TenancyEventsPage() {
       if (photoInput) photoInput.value = "";
       await load();
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "The tenancy event could not be saved.");
+      setError(getApiErrorMessage(requestError, "The tenancy event could not be saved."));
     } finally {
       setSaving(false);
     }
@@ -1194,9 +1396,17 @@ export function TenancyEventsPage() {
       </section>
       <section className="panel tenancy-events-panel">
         <div className="panel-heading"><div><h2 className="panel-title">Recent move events</h2><p className="panel-description">Check-in and check-out audit history for your access scope.</p></div></div>
-        {events.length ? <div className="table-wrap"><table><thead><tr><th>Action</th><th>Tenant</th><th>Property & unit</th><th>Recorded by</th><th>Date</th><th>Evidence</th><th>Notes</th></tr></thead><tbody>{events.map((item) => <tr key={item.id}><td><span className={`status-pill ${item.action === "check_in" ? "green" : ""}`}>{item.action.replaceAll("_", " ")}</span></td><td>{item.tenant_name}</td><td>{item.property_name} · {item.unit_number}</td><td>{item.recorded_by_name}</td><td>{new Date(item.recorded_at).toLocaleString()}</td><td>{item.evidence_photo ? <button className="button button-secondary button-compact" type="button" onClick={() => void openEvidence(item.id)}>View photo</button> : "—"}</td><td>{item.notes || "—"}</td></tr>)}</tbody></table></div> : <div className="empty-state"><strong>No move events yet</strong>Recorded check-ins and check-outs will be listed here.</div>}
+        {events.length ? <div className="table-wrap"><table><thead><tr><th>Action</th><th>Tenant</th><th>Property & unit</th><th>Recorded by</th><th>Date</th><th>Evidence</th><th>Notes</th></tr></thead><tbody>{events.map((item) => <tr key={item.id}><td><span className={`status-pill ${item.action === "check_in" ? "green" : ""}`}>{item.action.replaceAll("_", " ")}</span></td><td><span className="conversation-person">{item.tenant_user_id ? <UserAvatar userId={item.tenant_user_id} hasAvatar={item.tenant_has_avatar} name={item.tenant_name} className="user-avatar" /> : null}{item.tenant_user_id ? <button className="table-primary profile-trigger" type="button" onClick={() => setSelectedProfile({ userId: item.tenant_user_id as number, name: item.tenant_name, hasAvatar: item.tenant_has_avatar })}>{item.tenant_name}</button> : item.tenant_name}</span></td><td>{item.property_name} · {item.unit_number}</td><td>{item.recorded_by_name}</td><td>{new Date(item.recorded_at).toLocaleString()}</td><td>{item.evidence_photo ? <button className="button button-secondary button-compact" type="button" onClick={() => void openEvidence(item.id)}>View photo</button> : "—"}</td><td>{item.notes || "—"}</td></tr>)}</tbody></table></div> : <div className="empty-state"><strong>No move events yet</strong>Recorded check-ins and check-outs will be listed here.</div>}
       </section>
       {viewingEvidence && <div className="evidence-overlay" role="presentation" onClick={closeEvidence}><section className="evidence-dialog" role="dialog" aria-modal="true" aria-label="Handover evidence photo" onClick={(event) => event.stopPropagation()}><button className="button button-secondary" type="button" onClick={closeEvidence}>Close photo</button><Image src={viewingEvidence} alt="Handover evidence" width={1200} height={900} unoptimized /></section></div>}
+      {selectedProfile && (
+        <PublicProfileDialog
+          userId={selectedProfile.userId}
+          name={selectedProfile.name}
+          hasAvatar={selectedProfile.hasAvatar}
+          onClose={() => setSelectedProfile(null)}
+        />
+      )}
     </section>
   );
 }
@@ -1349,7 +1559,7 @@ export function OverviewPage() {
               <Metric label="Registered accounts" value={adminUsers.length} note="Across all provisioned roles" icon="staff" />
               <Metric label="Pending tenant access" value={pendingTenantAccess} note="Managers grant access when linking a tenant record" icon="tenants" />
               <Metric label="Active accounts" value={adminUsers.filter((item) => item.is_active_user).length} note="Enabled in the account registry" icon="check" />
-              <Metric label="Assigned units" value={adminUsers.reduce((total, item) => total + item.assigned_units.length, 0)} note="Staff scope assignments" icon="properties" />
+              <Metric label="Direct unit assignments" value={adminUsers.reduce((total, item) => total + item.assigned_units.length, 0)} note="Staff otherwise inherit their manager’s portfolio" icon="properties" />
             </div>
             <div className="dashboard-grid">
               <section className="panel"><div className="panel-heading"><div><h2 className="panel-title">Role provisioning</h2><p className="panel-description">Only administrators can grant manager and staff roles.</p></div></div><Link className="button button-primary" href="/dashboard/staff">Open user access</Link></section>
@@ -1364,14 +1574,14 @@ export function OverviewPage() {
   if (role === "staff") {
     return (
       <section>
-        <PageHeader title="Agency staff workspace" eyebrow="Assigned operations" description="Only units assigned to your account are included in these occupancy, lease and maintenance views." icon="dashboard" actions={<Link className="button button-secondary" href="/dashboard/tenancy-events"><Icon name="calendar" />Move workflow</Link>} />
+        <PageHeader title="Agency staff workspace" eyebrow="Shared portfolio operations" description="You can work with the properties and units managed by the manager who onboarded you, plus any units an administrator assigned directly. Financial ledgers stay restricted to managers." icon="dashboard" actions={<Link className="button button-secondary" href="/dashboard/tenancy-events"><Icon name="calendar" />Move workflow</Link>} />
         {error && <div className="error-state" role="alert"><span>{error}</span><button className="button button-secondary" onClick={() => void load()} type="button">Try again</button></div>}
-        {loading ? <div className="loading-state" role="status">Loading assigned operations…</div> : !error && (
+        {loading ? <div className="loading-state" role="status">Loading portfolio operations…</div> : !error && (
           <div className="metric-grid">
-            <Metric label="Assigned properties" value={stats?.total_properties ?? 0} note="Properties containing your assigned units" icon="properties" />
-            <Metric label="Assigned tenant records" value={stats?.total_tenants ?? 0} note={`${stats?.active_leases ?? 0} active leases`} icon="tenants" />
-            <Metric label="Occupied units" value={stats?.occupied_units ?? 0} note="Within your assignment" icon="home" />
-            <Metric label="Open work orders" value={jobs.filter((job) => job.status !== "completed").length} note="For your assigned units" icon="maintenance" />
+            <Metric label="Properties in scope" value={stats?.total_properties ?? 0} note="Contains a unit you can work with" icon="properties" />
+            <Metric label="Tenant records" value={stats?.total_tenants ?? 0} note={`${stats?.active_leases ?? 0} active leases`} icon="tenants" />
+            <Metric label="Occupied units" value={stats?.occupied_units ?? 0} note="Within your access scope" icon="home" />
+            <Metric label="Open work orders" value={jobs.filter((job) => job.status !== "completed").length} note="For properties in your scope" icon="maintenance" />
           </div>
         )}
       </section>
@@ -1490,23 +1700,37 @@ export function ProfilePage() {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  const [avatarError, setAvatarError] = useState("");
   const [passwordSaving, setPasswordSaving] = useState(false);
   const [passwordError, setPasswordError] = useState("");
   const [passwordMessage, setPasswordMessage] = useState("");
   const name = user?.username || user?.email || "SmartNest user";
-  const initials = name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase() ?? "").join("") || "S";
 
   const saveProfile = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setSaving(true);
     setMessage("");
     const form = new FormData(event.currentTarget);
+    const avatarFile = form.get("avatar_image");
+    if (avatarFile instanceof File && avatarFile.size > 5 * 1024 * 1024) {
+      setAvatarError("Profile photos must be 5 MB or smaller.");
+      setSaving(false);
+      return;
+    }
+    if (avatarFile instanceof File && avatarFile.size > 0 && !["image/jpeg", "image/png", "image/webp"].includes(avatarFile.type)) {
+      setAvatarError("Choose a JPEG, PNG, or WebP profile photo.");
+      setSaving(false);
+      return;
+    }
+    setAvatarError("");
     try {
       await authAPI.updateProfile({
         username: String(form.get("username") ?? ""),
         phone: String(form.get("phone") ?? ""),
+        ...(avatarFile instanceof File && avatarFile.size > 0 ? { avatar_image: avatarFile } : {}),
       });
       await refreshProfile();
+      window.dispatchEvent(new Event("smartnest:avatar-updated"));
       setMessage("Your profile has been updated.");
     } catch {
       setMessage("We couldn’t update your profile. Check the details and try again.");
@@ -1557,18 +1781,20 @@ export function ProfilePage() {
     <section>
       <PageHeader title="My profile" eyebrow="Account" description="Account details are read from your authenticated SmartNest profile." icon="profile" />
       <div className="panel profile-card">
-        <div className="profile-avatar">{initials}</div>
+        <UserAvatar userId={user?.id} hasAvatar={user?.has_avatar} name={name} className="profile-avatar" />
         <div><h2>{name}</h2><p>{user?.email}</p></div>
       </div>
       <section className="panel form-panel">
-        <div className="panel-heading"><div><h2 className="panel-title">Account information</h2><p className="panel-description">Update your name and contact phone. Your email and access role are managed by the service.</p></div></div>
+        <div className="panel-heading"><div><h2 className="panel-title">Account information</h2><p className="panel-description">Update your name, contact phone, and profile photo. Photos are only visible to your account and people connected to your property or work assignments.</p></div></div>
         <form onSubmit={saveProfile}>
           <div className="form-grid">
             <div className="field"><label htmlFor="profile-name">Full name</label><input id="profile-name" name="username" required maxLength={150} defaultValue={user?.username ?? ""} /></div>
             <div className="field"><label htmlFor="profile-phone">Phone number</label><input id="profile-phone" name="phone" type="tel" maxLength={20} defaultValue={user?.phone ?? ""} /></div>
             <div className="field"><label htmlFor="profile-email">Email address</label><input id="profile-email" value={user?.email ?? ""} readOnly /></div>
             <div className="field"><label htmlFor="profile-role">Role</label><input id="profile-role" value={user?.role ?? ""} readOnly /></div>
+            <div className="field field-full"><label htmlFor="profile-photo">Profile photo</label><input id="profile-photo" name="avatar_image" type="file" accept="image/jpeg,image/png,image/webp" /><small className="field-hint">JPEG, PNG, or WebP; maximum 5 MB.</small></div>
           </div>
+          {avatarError && <div className="form-error" role="alert">{avatarError}</div>}
           {message && <div className="form-message" role="status">{message}</div>}
           <div className="form-actions"><button className="button button-primary" type="submit" disabled={saving}>{saving ? "Saving…" : "Save profile"}</button></div>
         </form>
@@ -1605,9 +1831,9 @@ export function HelpPage() {
         <div className="panel-heading"><div><h2 className="panel-title">Who can see and manage what?</h2><p className="panel-description">Access follows the work people need to do—not every record in the system.</p></div></div>
         <div className="role-workflow-list">
           <p><strong>System administrator</strong><span>Manages accounts, roles, and which properties belong to each manager. Admin access to conversations and tenant records is limited unless needed for administration.</span></p>
-          <p><strong>Property manager</strong><span>Manages only assigned properties and their units, tenants, payments, expenses, maintenance, and handovers. Assigns staff to units and invites tenants.</span></p>
-          <p><strong>Staff</strong><span>Sees only assigned units and related tenant records. Can record inspections, check-ins, check-outs, and work orders for assigned units.</span></p>
-          <p><strong>Maintenance</strong><span>Sees work orders assigned to their account and can update progress, quote, and completion evidence.</span></p>
+          <p><strong>Property manager</strong><span>Manages only assigned properties and their units, tenants, payments, expenses, maintenance, and handovers. Creates staff and maintenance accounts and invites tenants.</span></p>
+          <p><strong>Staff</strong><span>Works with the portfolio of the manager who onboarded them, plus any units an administrator assigns directly. Sees tenant and lease records for that scope, can record inspections, check-ins, check-outs, and work orders, and can create tenant invitation links. Payments and expenses remain manager-only.</span></p>
+          <p><strong>Maintenance</strong><span>Sees only work orders assigned to their account, along with the tenant and property contact details needed to complete each job. Cannot browse the wider tenant or property directory.</span></p>
           <p><strong>Tenant</strong><span>Sees their linked tenancy, payments, and maintenance requests. Can raise repair requests and contact permitted property contacts.</span></p>
         </div>
         <p className="panel-description role-workflow-note">This is a product access summary, not legal advice. In Kenya, the Data Protection Act 2019 requires personal data to be handled lawfully, fairly, transparently, for a specific purpose, and with appropriate safeguards. SmartNest’s owner remains responsible for confirming the lawful basis, notices, retention period, and access/rectification process for their use.</p>

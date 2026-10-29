@@ -9,6 +9,25 @@ const api = axios.create({
   },
 });
 
+export function getApiErrorMessage(error: unknown, fallback: string): string {
+  if (!axios.isAxiosError(error)) {
+    return error instanceof Error ? error.message : fallback;
+  }
+
+  const data: unknown = error.response?.data;
+  if (typeof data === "string" && data.trim()) return data;
+  if (typeof data === "object" && data !== null) {
+    const details = Object.entries(data).flatMap(([field, value]) => {
+      const messages = Array.isArray(value) ? value : [value];
+      return messages
+        .filter((message): message is string => typeof message === "string")
+        .map((message) => field === "detail" || field === "error" ? message : `${field}: ${message}`);
+    });
+    if (details.length) return details.join(" ");
+  }
+  return error.message || fallback;
+}
+
 api.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
     const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
@@ -64,6 +83,7 @@ export interface User {
   role: string;
   phone: string;
   avatar: string;
+  has_avatar: boolean;
   property_cluster: string;
   is_active_user: boolean;
   portal_access_granted: boolean;
@@ -122,7 +142,15 @@ export interface OnboardTeamMember {
   password: string;
   phone: string;
   role: "staff" | "maintenance";
-  assigned_units: number[];
+}
+
+export interface PublicUser {
+  id: number;
+  username: string;
+  role: string;
+  phone: string;
+  property_cluster: string;
+  has_avatar: boolean;
 }
 
 export interface TenantInvitationDetails {
@@ -142,6 +170,7 @@ export interface CommunicationContact {
   id: number;
   username: string;
   role: string;
+  has_avatar: boolean;
 }
 
 export interface Conversation {
@@ -164,6 +193,8 @@ export interface TenancyEvent {
   id: number;
   tenant: number;
   tenant_name: string;
+  tenant_user_id: number | null;
+  tenant_has_avatar: boolean;
   unit: number;
   unit_number: string;
   property_name: string;
@@ -214,6 +245,10 @@ export interface Tenant {
   rent: string;
   status: string;
   account_linked: boolean;
+  account_user_id: number | null;
+  account_has_avatar: boolean;
+  invitation_email: string;
+  invitation_expires_at: string | null;
   created_at: string;
 }
 
@@ -248,6 +283,8 @@ export interface MaintenanceJob {
   issue: string;
   priority: string;
   reported_by: string;
+  reported_by_user_id: number | null;
+  reported_by_has_avatar: boolean;
   assignee: string;
   status: string;
   quote_amount: number | null;
@@ -279,7 +316,18 @@ export const authAPI = {
   login: (credentials: LoginCredentials) => api.post<AuthResponse>("/auth/login/", credentials),
   register: (data: RegisterData) => api.post<RegisterResponse>("/auth/register/", data),
   me: () => api.get<User>("/auth/me/"),
-  updateProfile: (data: Pick<User, "username" | "phone">) => api.patch<User>("/auth/me/", data),
+  updateProfile: (data: Pick<User, "username" | "phone"> & { avatar_image?: File }) => {
+    if (!data.avatar_image) {
+      return api.patch<User>("/auth/me/", { username: data.username, phone: data.phone });
+    }
+    const form = new FormData();
+    form.append("username", data.username);
+    form.append("phone", data.phone);
+    form.append("avatar_image", data.avatar_image);
+    return api.patch<User>("/auth/me/", form, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
+  },
   changePassword: (data: { current_password: string; new_password: string; confirm_password: string }) =>
     api.post<{ message: string }>("/auth/password/change/", data),
   requestPasswordReset: (email: string) =>
@@ -340,6 +388,8 @@ export const staffAPI = {
 export const usersAPI = {
   list: () => api.get<UserAccess[]>("/users/"),
   assignmentOptions: () => api.get<UserAssignmentOptions>("/users/assignment-options/"),
+  avatar: (id: number) => api.get<Blob>(`/users/${id}/avatar/`, { responseType: "blob" }),
+  profile: (id: number) => api.get<PublicUser>(`/users/${id}/profile/`),
   update: (id: number, data: Partial<Pick<UserAccess, "role" | "property_cluster" | "is_active_user" | "assigned_units" | "managed_property_ids">> & { managed_properties?: number[] }) =>
     api.patch<UserAccess>(`/users/${id}/`, data),
 };
@@ -368,7 +418,9 @@ export const tenancyEventsAPI = {
     form.append("action", data.action);
     if (data.notes) form.append("notes", data.notes);
     if (data.evidence_upload) form.append("evidence_upload", data.evidence_upload);
-    return api.post<TenancyEvent>("/tenancy-events/", form);
+    return api.post<TenancyEvent>("/tenancy-events/", form, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
   },
   photo: (id: number) => api.get<Blob>(`/tenancy-events/${id}/photo/`, { responseType: "blob" }),
 };
