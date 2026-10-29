@@ -33,6 +33,7 @@ import {
   type PublicUser,
   type Tenant,
   type TenancyEvent,
+  type Unit,
   type UserAccess,
   type UserAssignmentOptions,
 } from "@/lib/api";
@@ -399,8 +400,8 @@ function statusClass(key: string, value: unknown) {
   if (!["status", "match_status", "priority", "condition", "state"].includes(key)) return "";
   const status = String(value).toLowerCase();
   if (["active", "matched", "completed", "delivered", "excellent", "occupied", "leased"].includes(status)) return "green";
-  if (["high", "needs_review", "expiring", "fair", "in_progress"].includes(status)) return "warning";
-  if (["poor"].includes(status)) return "danger";
+  if (["high", "needs_review", "expiring", "fair", "in_progress", "pending_approval"].includes(status)) return "warning";
+  if (["poor", "rejected"].includes(status)) return "danger";
   return "";
 }
 
@@ -641,6 +642,404 @@ function VendorWorkOrderForm({
         <button className="button button-primary" type="submit" disabled={saving}>{saving ? "Saving…" : "Save update"}</button>
       </form>}
     </div>
+  );
+}
+
+function MaintenancePhotoButton({ jobId, label = "View damage photo" }: { jobId: number; label?: string }) {
+  const [photoUrl, setPhotoUrl] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => () => {
+    if (photoUrl) URL.revokeObjectURL(photoUrl);
+  }, [photoUrl]);
+
+  const openPhoto = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const { data } = await maintenanceAPI.photo(jobId);
+      setPhotoUrl(URL.createObjectURL(data));
+    } catch {
+      setError("This photo could not be loaded.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <>
+      <button className="button button-secondary button-compact" type="button" onClick={() => void openPhoto()} disabled={loading}>
+        <Icon name="inspections" />{loading ? "Loading…" : label}
+      </button>
+      {error && <span className="form-error" role="alert">{error}</span>}
+      {photoUrl && (
+        <div className="evidence-overlay" role="presentation" onClick={() => setPhotoUrl("")}>
+          <section className="evidence-dialog" role="dialog" aria-modal="true" aria-label="Maintenance damage photo" onClick={(event) => event.stopPropagation()}>
+            <button className="button button-secondary" type="button" onClick={() => setPhotoUrl("")}>Close photo</button>
+            <Image src={photoUrl} alt="Reported maintenance damage" width={1200} height={900} unoptimized />
+          </section>
+        </div>
+      )}
+    </>
+  );
+}
+
+function MaintenanceRequestPanel({ onSaved }: { onSaved: () => Promise<void> }) {
+  const [issue, setIssue] = useState("");
+  const [priority, setPriority] = useState("medium");
+  const [photo, setPhoto] = useState<File | null>(null);
+  const [preview, setPreview] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  useEffect(() => () => {
+    if (preview) URL.revokeObjectURL(preview);
+  }, [preview]);
+
+  const choosePhoto = (file: File | null) => {
+    setError("");
+    if (file && file.size > 5 * 1024 * 1024) {
+      setError("Choose a photo that is 5 MB or smaller.");
+      setPhoto(null);
+      setPreview("");
+      return;
+    }
+    setPhoto(file);
+    setPreview(file ? URL.createObjectURL(file) : "");
+  };
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSaving(true);
+    setError("");
+    setSuccess("");
+    try {
+      await maintenanceAPI.request({
+        issue: issue.trim(),
+        priority,
+        damage_photo_upload: photo ?? undefined,
+      });
+      setIssue("");
+      setPriority("medium");
+      choosePhoto(null);
+      setSuccess("Request sent. Your manager will review it and assign the right service team.");
+      await onSaved();
+    } catch (requestError) {
+      setError(getApiErrorMessage(requestError, "Your maintenance request could not be sent."));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section className="panel form-panel">
+      <div className="panel-heading">
+        <div>
+          <h2 className="panel-title">Request a repair</h2>
+          <p className="panel-description">Tell your manager what needs attention, choose how urgent it is, and attach a photo so the damage can be assessed before approval.</p>
+        </div>
+      </div>
+      <form onSubmit={submit}>
+        <div className="form-grid">
+          <div className="field field-full">
+            <label htmlFor="maintenance-issue">What needs attention?</label>
+            <textarea id="maintenance-issue" required maxLength={200} value={issue} onChange={(event) => setIssue(event.target.value)} placeholder="Describe the issue and where it is in your unit." />
+          </div>
+          <div className="field">
+            <label htmlFor="maintenance-priority">How urgent is it?</label>
+            <select id="maintenance-priority" value={priority} onChange={(event) => setPriority(event.target.value)}>
+              <option value="low">Low — can wait for a scheduled visit</option>
+              <option value="medium">Medium — needs attention soon</option>
+              <option value="high">High — urgent or unsafe</option>
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="maintenance-photo">Damage photo (optional)</label>
+            <input id="maintenance-photo" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => choosePhoto(event.target.files?.[0] ?? null)} />
+            <span className="field-hint">JPEG, PNG or WebP, up to 5 MB. This helps the manager and service team assess the work.</span>
+          </div>
+          {preview && <div className="field field-full"><Image className="maintenance-photo-preview" src={preview} alt="Damage photo preview" width={640} height={420} unoptimized /></div>}
+        </div>
+        {error && <div className="form-error" role="alert">{error}</div>}
+        {success && <div className="hint-card" role="status"><strong>Request submitted</strong>{success}</div>}
+        <div className="form-actions">
+          <button className="button button-primary" type="submit" disabled={saving || !issue.trim()}>
+            <Icon name="arrow" />{saving ? "Sending…" : "Send request for approval"}
+          </button>
+        </div>
+      </form>
+    </section>
+  );
+}
+
+function MaintenanceApprovalCard({
+  job,
+  assignees,
+  onSaved,
+  onViewProfile,
+}: {
+  job: MaintenanceJob;
+  assignees: CommunicationContact[];
+  onSaved: () => Promise<void>;
+  onViewProfile: (userId: number, name: string, hasAvatar?: boolean) => void;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const approve = async () => {
+    setSaving(true);
+    setError("");
+    try {
+      await maintenanceAPI.approve(job.id, {});
+      await onSaved();
+    } catch (requestError) {
+      setError(getApiErrorMessage(requestError, "This request could not be approved."));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <article className="panel maintenance-approval-card">
+      <div className="maintenance-card-head">
+        <div>
+          <div className="page-eyebrow"><Icon name="maintenance" />Awaiting your approval</div>
+          <h3>{job.issue}</h3>
+          <p className="panel-description">{job.job_id} · {new Date(job.date).toLocaleDateString()} · {job.property_name}{job.unit_number ? ` · Unit ${job.unit_number}` : ""}</p>
+        </div>
+        <div className="maintenance-badges">
+          <span className={`status-pill ${statusClass("priority", job.priority)}`}>{job.priority} priority</span>
+          {job.has_damage_photo && <MaintenancePhotoButton jobId={job.id} />}
+        </div>
+      </div>
+      <div className="maintenance-requester">
+        <UserAvatar userId={job.reported_by_user_id ?? undefined} hasAvatar={job.reported_by_has_avatar} name={job.reported_by} className="user-avatar" />
+        <div><strong>{job.reported_by}</strong><small>Tenant request</small></div>
+        {job.reported_by_user_id && <button className="profile-trigger" type="button" onClick={() => onViewProfile(job.reported_by_user_id!, job.reported_by, job.reported_by_has_avatar)}>View profile</button>}
+      </div>
+      {!assignees.length && <p className="field-hint">No service account is linked yet. The request can be approved and the manager can arrange a service contact later.</p>}
+      {error && <div className="form-error" role="alert">{error}</div>}
+      <div className="form-actions">
+        <button className="button button-primary" type="button" onClick={() => void approve()} disabled={saving}><Icon name="check" />{saving ? "Approving…" : "Approve request"}</button>
+      </div>
+    </article>
+  );
+}
+
+function TenantMaintenanceHistory({ jobs, onViewProfile }: { jobs: MaintenanceJob[]; onViewProfile: (userId: number, name: string, hasAvatar?: boolean) => void }) {
+  if (!jobs.length) {
+    return <div className="empty-state"><strong>No maintenance requests yet</strong>When something in your unit needs attention, send a request above and it will appear here.</div>;
+  }
+  return (
+    <div className="maintenance-job-list">
+      {jobs.map((job) => (
+        <article className="panel maintenance-job-card" key={job.id}>
+          <div className="maintenance-card-head">
+            <div>
+              <div className="maintenance-badges">
+                <span className={`status-pill ${statusClass("status", job.status)}`}>{job.status.replaceAll("_", " ")}</span>
+                <span className={`status-pill ${statusClass("priority", job.priority)}`}>{job.priority} priority</span>
+              </div>
+              <h3>{job.issue}</h3>
+              <p className="panel-description">{job.job_id} · {new Date(job.date).toLocaleDateString()} · {job.property_name}{job.unit_number ? ` · Unit ${job.unit_number}` : ""}</p>
+            </div>
+            {job.has_damage_photo && <MaintenancePhotoButton jobId={job.id} />}
+          </div>
+          {job.status === "pending_approval" && <p className="hint-card"><strong>Waiting for approval</strong>Your manager is reviewing this request. You will be able to contact the service team once it is approved.</p>}
+          {job.status === "rejected" && <p className="hint-card"><strong>Request declined</strong>{job.manager_notes || "Contact your manager if you need more information about this decision."}</p>}
+          {job.manager_notes && job.status !== "rejected" && <p className="panel-description"><strong>Manager note:</strong> {job.manager_notes}</p>}
+          {(job.assigned_to_name || job.status === "assigned" || job.status === "in_progress" || job.status === "completed") && (
+            <div className="maintenance-service-row">
+              <UserAvatar userId={job.assigned_to ?? undefined} hasAvatar={job.assigned_to_has_avatar} name={job.assigned_to_name || job.assignee} className="user-avatar" />
+              <div><strong>{job.assigned_to_name || job.assignee}</strong><small>Service team{job.approved_by_name ? ` · approved by ${job.approved_by_name}` : ""}</small></div>
+              {job.assigned_to && <button className="profile-trigger" type="button" onClick={() => onViewProfile(job.assigned_to!, job.assigned_to_name || job.assignee, job.assigned_to_has_avatar)}>View profile</button>}
+              {job.assigned_to && <Link className="button button-primary button-compact" href={`/dashboard/messages?recipient=${job.assigned_to}`}><Icon name="message" />Message service</Link>}
+            </div>
+          )}
+          {job.status !== "pending_approval" && job.status !== "rejected" && !job.assigned_to && <p className="field-hint">Approved. Your manager is arranging the service team.</p>}
+          {job.quote_notes && <p className="panel-description"><strong>Service update:</strong> {job.quote_notes}</p>}
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function ServiceMaintenanceHistory({ jobs, onSaved, onViewProfile }: { jobs: MaintenanceJob[]; onSaved: () => Promise<void>; onViewProfile: (userId: number, name: string, hasAvatar?: boolean) => void }) {
+  if (!jobs.length) {
+    return <div className="empty-state"><strong>No approved work orders yet</strong>Requests assigned to you by a manager will appear here after approval.</div>;
+  }
+  return (
+    <div className="maintenance-job-list">
+      {jobs.map((job) => (
+        <article className="panel maintenance-job-card" key={job.id}>
+          <div className="maintenance-card-head">
+            <div>
+              <div className="maintenance-badges">
+                <span className={`status-pill ${statusClass("status", job.status)}`}>{job.status.replaceAll("_", " ")}</span>
+                <span className={`status-pill ${statusClass("priority", job.priority)}`}>{job.priority} priority</span>
+              </div>
+              <h3>{job.issue}</h3>
+              <p className="panel-description">{job.job_id} · {new Date(job.date).toLocaleDateString()} · {job.property_name}{job.unit_number ? ` · Unit ${job.unit_number}` : ""}</p>
+            </div>
+            {job.has_damage_photo && <MaintenancePhotoButton jobId={job.id} />}
+          </div>
+          <div className="maintenance-service-row">
+            <UserAvatar userId={job.reported_by_user_id ?? undefined} hasAvatar={job.reported_by_has_avatar} name={job.reported_by} className="user-avatar" />
+            <div><strong>{job.reported_by}</strong><small>Tenant who reported the issue</small></div>
+            {job.reported_by_user_id && <button className="profile-trigger" type="button" onClick={() => onViewProfile(job.reported_by_user_id!, job.reported_by, job.reported_by_has_avatar)}>View profile</button>}
+            {job.reported_by_user_id && <Link className="button button-secondary button-compact" href={`/dashboard/messages?recipient=${job.reported_by_user_id}`}><Icon name="message" />Message tenant</Link>}
+          </div>
+          {job.manager_notes && <p className="panel-description"><strong>Manager note:</strong> {job.manager_notes}</p>}
+          <div className="maintenance-service-actions">
+            <VendorWorkOrderForm jobId={job.id} status={job.status} quoteAmount={typeof job.quote_amount === "number" ? job.quote_amount : null} quoteNotes={job.quote_notes} confirmationPhotoUrl={job.confirmation_photo_url} onSaved={onSaved} />
+          </div>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+export function MaintenancePage() {
+  const { user } = useAuth();
+  const role = user?.role ?? "";
+  const isManagerial = role === "manager" || role === "staff";
+  const [jobs, setJobs] = useState<MaintenanceJob[]>([]);
+  const [assignees, setAssignees] = useState<CommunicationContact[]>([]);
+  const [properties, setProperties] = useState<Property[]>([]);
+  const [units, setUnits] = useState<Unit[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [selectedProfile, setSelectedProfile] = useState<{ userId: number; name: string; hasAvatar?: boolean } | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const jobResponse = await maintenanceAPI.list();
+      setJobs(jobResponse.data);
+      if (isManagerial) {
+        const [propertyResponse, unitResponse, assigneeResponse] = await Promise.all([
+          propertiesAPI.list(),
+          unitsAPI.list(),
+          maintenanceAPI.assignees(),
+        ]);
+        setProperties(propertyResponse.data);
+        setUnits(unitResponse.data);
+        setAssignees(assigneeResponse.data);
+      }
+    } catch {
+      setError("Maintenance requests could not be loaded from the SmartNest API.");
+    } finally {
+      setLoading(false);
+    }
+  }, [isManagerial]);
+
+  useEffect(() => {
+    let active = true;
+    void Promise.resolve().then(() => {
+      if (active) void load();
+    });
+    return () => { active = false; };
+  }, [load]);
+
+  const orderedJobs = useMemo(() => [...jobs].sort((left, right) => {
+    const rank = (status: string) => status === "pending_approval" ? 0 : status === "rejected" ? 3 : 1;
+    return rank(left.status) - rank(right.status) || right.id - left.id;
+  }), [jobs]);
+  const pendingJobs = orderedJobs.filter((job) => job.status === "pending_approval");
+  const openJobs = jobs.filter((job) => ["assigned", "in_progress", "logged"].includes(job.status));
+  const completedJobs = jobs.filter((job) => job.status === "completed");
+  const highPriorityJobs = jobs.filter((job) => job.priority === "high" && job.status !== "completed" && job.status !== "rejected");
+  const references: References = { properties: rowsOf(properties), units: rowsOf(units) };
+  const viewProfile = (userId: number, name: string, hasAvatar?: boolean) => setSelectedProfile({ userId, name, hasAvatar });
+  const description = role === "tenant"
+    ? "Report an issue, choose how urgent it is, and follow your manager's approval and the service team's progress."
+    : role === "maintenance"
+      ? "Review approved work orders assigned to you and keep the tenant updated as the repair progresses."
+      : "Approve tenant requests, assign the right service team, and keep every repair moving.";
+
+  return (
+    <section>
+      <PageHeader
+        title="Maintenance"
+        eyebrow={role === "tenant" ? "Your repair requests" : role === "maintenance" ? "Service work orders" : "Approvals & work orders"}
+        description={description}
+        icon="maintenance"
+        actions={isManagerial ? <RecordForm form={maintenanceForm} references={references} onSaved={load} /> : undefined}
+      />
+      {error && <div className="error-state" role="alert"><span>{error}</span><button className="button button-secondary" type="button" onClick={() => void load()}>Try again</button></div>}
+      {loading ? <div className="loading-state" role="status">Loading maintenance requests…</div> : !error && (
+        <>
+          <div className="metric-grid">
+            <Metric label={role === "tenant" ? "Your requests" : "Pending approval"} value={role === "tenant" ? jobs.length : pendingJobs.length} note={role === "tenant" ? "Submitted by your account" : "Tenant requests waiting for you"} icon="maintenance" />
+            <Metric label="Open work orders" value={openJobs.length} note="Approved and still in progress" icon="inspections" />
+            <Metric label="Completed" value={completedJobs.length} note="Repairs marked complete" icon="check" />
+            <Metric label="High priority" value={highPriorityJobs.length} note="Urgent open requests" icon="notices" />
+          </div>
+
+          {role === "tenant" && <MaintenanceRequestPanel onSaved={load} />}
+
+          {isManagerial && (
+            <section className="maintenance-approval-section">
+              <div className="panel-heading">
+                <div><h2 className="panel-title">Requests awaiting approval</h2><p className="panel-description">Approve the request and assign a service team member. That is all that is needed to start the repair conversation.</p></div>
+              </div>
+              {pendingJobs.length ? (
+                <div className="maintenance-approval-list">
+                  {pendingJobs.map((job) => <MaintenanceApprovalCard job={job} assignees={assignees} onSaved={load} onViewProfile={viewProfile} key={job.id} />)}
+                </div>
+              ) : <div className="empty-state"><strong>No requests waiting</strong>New tenant maintenance requests will appear here for approval.</div>}
+            </section>
+          )}
+
+          {role === "tenant" ? <TenantMaintenanceHistory jobs={orderedJobs} onViewProfile={viewProfile} /> : role === "maintenance" ? <ServiceMaintenanceHistory jobs={orderedJobs} onSaved={load} onViewProfile={viewProfile} /> : (
+            <section className="panel">
+              <div className="panel-heading"><div><h2 className="panel-title">All maintenance records</h2><p className="panel-description">{orderedJobs.length} work order{orderedJobs.length === 1 ? "" : "s"} in your portfolio.</p></div></div>
+              {orderedJobs.length ? (
+                <div className="table-wrap">
+                  <table>
+                    <thead><tr><th>Work order</th><th>Issue</th><th>Tenant</th><th>Property / unit</th><th>Priority</th><th>Status</th><th>Service team</th><th>Photo</th></tr></thead>
+                    <tbody>
+                      {orderedJobs.map((job) => (
+                        <tr key={job.id}>
+                          <td className="table-primary">{job.job_id}<br /><small>{new Date(job.date).toLocaleDateString()}</small></td>
+                          <td>{job.issue}</td>
+                          <td>
+                            <span className="conversation-person">
+                              <UserAvatar userId={job.reported_by_user_id ?? undefined} hasAvatar={job.reported_by_has_avatar} name={job.reported_by} className="user-avatar" />
+                              {job.reported_by_user_id ? <button className="table-primary profile-trigger" type="button" onClick={() => viewProfile(job.reported_by_user_id!, job.reported_by, job.reported_by_has_avatar)}>{job.reported_by}</button> : job.reported_by}
+                            </span>
+                            {job.reported_by_user_id && <Link className="button button-secondary button-compact" href={`/dashboard/messages?recipient=${job.reported_by_user_id}`}><Icon name="message" />Message</Link>}
+                          </td>
+                          <td>{job.property_name}{job.unit_number ? ` · ${job.unit_number}` : ""}</td>
+                          <td><span className={`status-pill ${statusClass("priority", job.priority)}`}>{job.priority}</span></td>
+                          <td><span className={`status-pill ${statusClass("status", job.status)}`}>{job.status.replaceAll("_", " ")}</span></td>
+                          <td>
+                            {job.assigned_to_name || job.assignee}
+                            {job.assigned_to && <button className="profile-trigger" type="button" onClick={() => viewProfile(job.assigned_to!, job.assigned_to_name || job.assignee, job.assigned_to_has_avatar)}>View profile</button>}
+                          </td>
+                          <td>{job.has_damage_photo ? <MaintenancePhotoButton jobId={job.id} label="View" /> : <span className="panel-description">None</span>}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : <div className="empty-state"><strong>No work orders yet</strong>Tenant requests and work orders will appear here.</div>}
+            </section>
+          )}
+        </>
+      )}
+      {selectedProfile && (
+        <PublicProfileDialog
+          userId={selectedProfile.userId}
+          name={selectedProfile.name}
+          hasAvatar={selectedProfile.hasAvatar}
+          onClose={() => setSelectedProfile(null)}
+        />
+      )}
+    </section>
   );
 }
 

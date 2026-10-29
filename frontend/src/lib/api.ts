@@ -286,10 +286,18 @@ export interface MaintenanceJob {
   reported_by_user_id: number | null;
   reported_by_has_avatar: boolean;
   assignee: string;
+  assigned_to: number | null;
+  assigned_to_name: string | null;
+  assigned_to_has_avatar: boolean;
   status: string;
   quote_amount: number | null;
   quote_notes: string;
+  has_damage_photo: boolean;
   confirmation_photo_url: string;
+  approved_by: number | null;
+  approved_by_name: string | null;
+  approved_at: string | null;
+  manager_notes: string;
   date: string;
 }
 
@@ -377,7 +385,22 @@ export const noticesAPI = {
 export const maintenanceAPI = {
   list: () => api.get<MaintenanceJob[]>("/maintenance/"),
   create: (data: Partial<MaintenanceJob>) => api.post<MaintenanceJob>("/maintenance/", data),
+  request: (data: { issue: string; priority: string; damage_photo_upload?: File }) => {
+    const form = new FormData();
+    form.append("issue", data.issue);
+    form.append("priority", data.priority);
+    if (data.damage_photo_upload) form.append("damage_photo_upload", data.damage_photo_upload);
+    return api.post<MaintenanceJob>("/maintenance/", form, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
+  },
   update: (id: number, data: Partial<MaintenanceJob>) => api.patch<MaintenanceJob>(`/maintenance/${id}/`, data),
+  assignees: () => api.get<CommunicationContact[]>("/maintenance/assignees/"),
+  approve: (id: number, data: { assigned_to?: number | null; note?: string }) =>
+    api.post<MaintenanceJob>(`/maintenance/${id}/approve/`, data),
+  reject: (id: number, data: { reason?: string }) =>
+    api.post<MaintenanceJob>(`/maintenance/${id}/reject/`, data),
+  photo: (id: number) => api.get<Blob>(`/maintenance/${id}/photo/`, { responseType: "blob" }),
 };
 
 export const staffAPI = {

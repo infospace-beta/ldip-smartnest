@@ -566,6 +566,31 @@ th,
 .role-workflow-list span, .role-workflow-note { color: var(--muted); line-height: 1.65; }
 .role-workflow-note { margin: 16px 0; }
 
+.button-danger { background: var(--danger); color: #fff; }
+.button-danger:hover { background: #8f2b23; }
+.field > span { color: var(--muted); font-size: 9px; font-weight: 800; letter-spacing: .07em; text-transform: uppercase; }
+.maintenance-approval-section { display: grid; gap: 13px; margin: 22px 0; }
+.maintenance-approval-list, .maintenance-job-list { display: grid; gap: 14px; }
+.maintenance-approval-card, .maintenance-job-card { display: grid; gap: 14px; }
+.maintenance-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.maintenance-card-head h3 { margin: 6px 0 0; font-size: 17px; letter-spacing: -.03em; }
+.maintenance-badges { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; }
+.maintenance-requester, .maintenance-service-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding-top: 13px; border-top: 1px solid var(--line); }
+.maintenance-requester strong, .maintenance-service-row strong { display: block; color: var(--ink); font-size: 12px; }
+.maintenance-requester small, .maintenance-service-row small { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; }
+.maintenance-service-row .button { margin-left: auto; }
+.maintenance-approval-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.maintenance-reject-form { display: grid; gap: 4px; padding-top: 12px; border-top: 1px solid var(--line); }
+.maintenance-photo-preview { display: block; max-width: min(100%, 420px); max-height: 300px; margin-top: 4px; border: 1px solid var(--line); border-radius: 16px; object-fit: cover; }
+.maintenance-service-actions { padding-top: 12px; border-top: 1px solid var(--line); }
+
+@media (max-width: 760px) {
+  .maintenance-card-head, .maintenance-approval-form { grid-template-columns: 1fr; }
+  .maintenance-card-head { flex-direction: column; }
+  .maintenance-badges { justify-content: flex-start; }
+  .maintenance-service-row .button { margin-left: 0; }
+}
+
 @media (max-width: 760px) {
   .public-home { padding: 0 20px; }
   .public-nav { min-height: 72px; }

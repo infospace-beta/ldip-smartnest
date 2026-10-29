@@ -196,10 +196,12 @@ class MaintenanceJob(models.Model):
     ]
 
     STATUS_CHOICES = [
+        ('pending_approval', 'Pending approval'),
         ('logged', 'Logged'),
         ('assigned', 'Assigned'),
         ('in_progress', 'In Progress'),
         ('completed', 'Completed'),
+        ('rejected', 'Rejected'),
     ]
 
     job_id = models.CharField(max_length=20, unique=True)
@@ -216,10 +218,27 @@ class MaintenanceJob(models.Model):
         related_name='maintenance_requests',
     )
     assignee = models.CharField(max_length=200)
+    assigned_to = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='assigned_maintenance_jobs',
+    )
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='assigned')
     quote_amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     quote_notes = models.TextField(blank=True)
+    damage_photo = models.FileField(upload_to='maintenance/%Y/%m/', blank=True)
     confirmation_photo_url = models.URLField(blank=True)
+    approved_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='approved_maintenance_jobs',
+    )
+    approved_at = models.DateTimeField(null=True, blank=True)
+    manager_notes = models.TextField(blank=True)
     date = models.DateField()
 
     class Meta:

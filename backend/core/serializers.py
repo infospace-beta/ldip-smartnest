@@ -13,6 +13,21 @@ from .models import (
 )
 
 
+def validate_image_upload(uploaded_file, label='Photos'):
+    if uploaded_file.size > 5 * 1024 * 1024:
+        raise serializers.ValidationError(f'{label} must be 5 MB or smaller.')
+    signature = uploaded_file.read(12)
+    uploaded_file.seek(0)
+    is_image = (
+        signature.startswith(b'\xff\xd8\xff')
+        or signature.startswith(b'\x89PNG\r\n\x1a\n')
+        or (signature.startswith(b'RIFF') and signature[8:12] == b'WEBP')
+    )
+    if not is_image:
+        raise serializers.ValidationError(f'Upload a valid JPEG, PNG, or WebP image for {label.lower()}.')
+    return uploaded_file
+
+
 class UserSerializer(serializers.ModelSerializer):
     has_avatar = serializers.SerializerMethodField()
 
@@ -552,14 +567,21 @@ class MaintenanceJobSerializer(serializers.ModelSerializer):
     unit_number = serializers.CharField(source='unit.unit_number', read_only=True)
     reported_by_user_id = serializers.SerializerMethodField()
     reported_by_has_avatar = serializers.SerializerMethodField()
+    assigned_to_name = serializers.CharField(source='assigned_to.username', read_only=True, default=None)
+    assigned_to_has_avatar = serializers.SerializerMethodField()
+    approved_by_name = serializers.CharField(source='approved_by.username', read_only=True, default=None)
+    has_damage_photo = serializers.SerializerMethodField()
+    damage_photo_upload = serializers.FileField(write_only=True, required=False, allow_empty_file=False)
 
     class Meta:
         model = MaintenanceJob
         fields = [
             'id', 'job_id', 'property', 'property_name', 'unit', 'unit_number', 'issue',
             'priority', 'reported_by', 'reported_by_user_id', 'reported_by_has_avatar',
-            'assignee', 'status', 'quote_amount', 'quote_notes',
-            'confirmation_photo_url', 'date',
+            'assignee', 'assigned_to', 'assigned_to_name', 'assigned_to_has_avatar',
+            'status', 'quote_amount', 'quote_notes', 'has_damage_photo', 'damage_photo_upload',
+            'confirmation_photo_url', 'approved_by', 'approved_by_name', 'approved_at',
+            'manager_notes', 'date',
         ]
 
     def get_reported_by_user_id(self, obj):
@@ -568,12 +590,51 @@ class MaintenanceJobSerializer(serializers.ModelSerializer):
     def get_reported_by_has_avatar(self, obj):
         return bool(obj.reported_by_user and obj.reported_by_user.avatar_image)
 
+    def get_assigned_to_has_avatar(self, obj):
+        return bool(obj.assigned_to and obj.assigned_to.avatar_image)
+
+    def get_has_damage_photo(self, obj):
+        return bool(obj.damage_photo)
+
+    def validate_damage_photo_upload(self, uploaded_file):
+        return validate_image_upload(uploaded_file, 'Damage photos')
+
     def validate(self, attrs):
         property_value = attrs.get('property', getattr(self.instance, 'property', None))
         unit_value = attrs.get('unit', getattr(self.instance, 'unit', None))
         if unit_value and property_value and unit_value.property_id != property_value.id:
             raise serializers.ValidationError({'unit': 'Choose a unit belonging to the selected property.'})
         return attrs
+
+    def create(self, validated_data):
+        photo = validated_data.pop('damage_photo_upload', None)
+        job = super().create(validated_data)
+        if photo:
+            job.damage_photo = photo
+            job.save(update_fields=['damage_photo'])
+        return job
+
+
+class TenantMaintenanceRequestSerializer(serializers.Serializer):
+    issue = serializers.CharField(max_length=200)
+    priority = serializers.ChoiceField(choices=MaintenanceJob.PRIORITY_CHOICES, default='medium')
+    damage_photo_upload = serializers.FileField(required=False, allow_empty_file=False, write_only=True)
+
+    def validate_damage_photo_upload(self, uploaded_file):
+        return validate_image_upload(uploaded_file, 'Damage photos')
+
+
+class MaintenanceApprovalSerializer(serializers.Serializer):
+    assigned_to = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.filter(role='maintenance', is_active=True, is_active_user=True),
+        required=False,
+        allow_null=True,
+    )
+    note = serializers.CharField(required=False, allow_blank=True, max_length=2000)
+
+
+class MaintenanceRejectionSerializer(serializers.Serializer):
+    reason = serializers.CharField(required=False, allow_blank=True, max_length=2000)
 
 
 class MaintenanceVendorUpdateSerializer(serializers.ModelSerializer):

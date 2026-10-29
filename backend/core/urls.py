@@ -45,7 +45,11 @@ urlpatterns = [
 
     # Maintenance
     path('maintenance/', views.maintenance_list, name='maintenance_list'),
+    path('maintenance/assignees/', views.maintenance_assignees, name='maintenance_assignees'),
     path('maintenance/<int:pk>/', views.maintenance_detail, name='maintenance_detail'),
+    path('maintenance/<int:pk>/approve/', views.maintenance_approve, name='maintenance_approve'),
+    path('maintenance/<int:pk>/reject/', views.maintenance_reject, name='maintenance_reject'),
+    path('maintenance/<int:pk>/photo/', views.maintenance_photo, name='maintenance_photo'),
     path('tenancy-events/', views.tenancy_events, name='tenancy_events'),
     path('tenancy-events/<int:pk>/photo/', views.tenancy_event_photo, name='tenancy_event_photo'),
 

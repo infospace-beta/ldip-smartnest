@@ -12,7 +12,7 @@ from django.conf import settings
 from django.contrib.auth.tokens import default_token_generator
 from django.contrib.auth import get_user_model
 from django.db import transaction
-from django.db.models import Count, Sum
+from django.db.models import Count, Q, Sum
 from django.core.mail import send_mail
 from django.http import FileResponse
 from django.utils.encoding import force_bytes, force_str
@@ -37,6 +37,9 @@ from .serializers import (
     PasswordChangeSerializer, PasswordResetConfirmSerializer,
     PasswordResetRequestSerializer,
     MaintenanceVendorUpdateSerializer,
+    TenantMaintenanceRequestSerializer,
+    MaintenanceApprovalSerializer,
+    MaintenanceRejectionSerializer,
 )
 
 User = get_user_model()
@@ -132,6 +135,54 @@ def staff_unit_ids(user):
     return unit_ids
 
 
+def maintenance_jobs_for(user):
+    """Work orders where the user is the named or linked service provider."""
+    return MaintenanceJob.objects.filter(
+        Q(assigned_to=user)
+        | Q(assignee__in=[user.username, user.email])
+    )
+
+
+def manager_for_staff(user):
+    if user.role == 'staff' and user.onboarded_by and user.onboarded_by.role == 'manager':
+        return user.onboarded_by
+    return None
+
+
+def assignable_maintenance_users(user):
+    """Maintenance accounts a manager (or their staff) may assign work to."""
+    users = User.objects.filter(
+        role='maintenance',
+        is_active=True,
+        is_active_user=True,
+    )
+    if user.role == 'admin':
+        return users
+    manager = user if user.role == 'manager' else manager_for_staff(user)
+    if not manager:
+        return users.none()
+    return users.filter(
+        Q(onboarded_by=manager)
+        | Q(assigned_maintenance_jobs__property__owner=manager)
+    ).distinct()
+
+
+def maintenance_scope(queryset, user):
+    if user.role == 'manager':
+        return manager_scope(queryset, user)
+    if user.role == 'staff':
+        unit_ids = staff_unit_ids(user)
+        return queryset.filter(unit_id__in=unit_ids) if unit_ids else queryset.none()
+    if user.role == 'maintenance':
+        return queryset.filter(
+            Q(assigned_to=user)
+            | Q(assignee__in=[user.username, user.email])
+        )
+    if user.role == 'tenant':
+        return queryset.filter(reported_by_user=user)
+    return queryset.none()
+
+
 def can_contact(sender, recipient):
     if sender.pk == recipient.pk or not recipient.is_active or not recipient.is_active_user:
         return False
@@ -145,8 +196,9 @@ def can_contact(sender, recipient):
                 or recipient.assigned_units.filter(property__owner=sender).exists()
                 or recipient.onboarded_by_id == sender.id
                 or MaintenanceJob.objects.filter(
+                    Q(assigned_to=recipient)
+                    | Q(assignee__in=[recipient.username, recipient.email]),
                     property__owner=sender,
-                    assignee__in=[recipient.username, recipient.email],
                 ).exists()
             )
         )
@@ -161,7 +213,10 @@ def can_contact(sender, recipient):
         if recipient.role == 'maintenance':
             return MaintenanceJob.objects.filter(
                 reported_by_user=sender,
-                assignee__in=[recipient.username, recipient.email],
+                status__in=('assigned', 'in_progress', 'completed'),
+            ).filter(
+                Q(assigned_to=recipient)
+                | Q(assignee__in=[recipient.username, recipient.email]),
             ).exists()
         return False
     if sender.role == 'staff':
@@ -177,11 +232,13 @@ def can_contact(sender, recipient):
         if recipient.role == 'maintenance':
             return MaintenanceJob.objects.filter(
                 unit_id__in=unit_ids,
-                assignee__in=[recipient.username, recipient.email],
+            ).filter(
+                Q(assigned_to=recipient)
+                | Q(assignee__in=[recipient.username, recipient.email]),
             ).exists()
         return False
     if sender.role == 'maintenance':
-        jobs = MaintenanceJob.objects.filter(assignee__in=[sender.username, sender.email])
+        jobs = maintenance_jobs_for(sender)
         if recipient.role == 'manager':
             return jobs.filter(property__owner=recipient).exists()
         if recipient.role == 'staff':
@@ -758,35 +815,37 @@ def maintenance_list(request):
     if request.method == 'GET':
         if request.user.role not in ('manager', 'staff', 'maintenance', 'tenant'):
             return forbidden()
-        jobs = MaintenanceJob.objects.select_related('property', 'unit', 'reported_by_user')
-        if request.user.role == 'tenant':
-            jobs = jobs.filter(reported_by_user=request.user)
-        elif request.user.role == 'maintenance':
-            jobs = jobs.filter(assignee__in=[request.user.username, request.user.email])
-        jobs = manager_scope(jobs, request.user)
-        jobs = apply_staff_cluster(jobs, request.user, 'property__cluster')
+        jobs = MaintenanceJob.objects.select_related(
+            'property', 'unit', 'reported_by_user', 'assigned_to', 'approved_by',
+        )
+        jobs = maintenance_scope(jobs, request.user)
         serializer = MaintenanceJobSerializer(jobs, many=True)
         return Response(serializer.data)
     if request.user.role == 'tenant':
         tenant = tenant_record(request.user)
         if not tenant or not tenant.unit_id:
             return Response({'error': 'A linked tenant and unit record is required to submit a maintenance request.'}, status=status.HTTP_400_BAD_REQUEST)
-        payload = {
-            'job_id': f'REQ-{uuid4().hex[:10].upper()}',
-            'property': tenant.property_id,
-            'unit': tenant.unit_id,
-            'issue': request.data.get('issue', ''),
-            'reported_by': tenant.name,
-            'assignee': 'Property management',
-            'priority': 'medium',
-            'status': 'logged',
-            'date': timezone.localdate().isoformat(),
-        }
-        serializer = MaintenanceJobSerializer(data=payload)
-        if serializer.is_valid():
-            serializer.save(reported_by_user=request.user)
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer = TenantMaintenanceRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        values = serializer.validated_data
+        job = MaintenanceJob.objects.create(
+            job_id=f'REQ-{uuid4().hex[:10].upper()}',
+            property_id=tenant.property_id,
+            unit_id=tenant.unit_id,
+            issue=values['issue'].strip(),
+            reported_by=tenant.name,
+            reported_by_user=request.user,
+            assignee='Property management',
+            priority=values['priority'],
+            status='pending_approval',
+            date=timezone.localdate(),
+        )
+        photo = values.get('damage_photo_upload')
+        if photo:
+            job.damage_photo = photo
+            job.save(update_fields=['damage_photo'])
+        return Response(MaintenanceJobSerializer(job).data, status=status.HTTP_201_CREATED)
     if not has_role(request.user, 'manager', 'staff'):
         return forbidden()
     serializer = MaintenanceJobSerializer(data=request.data)
@@ -800,9 +859,18 @@ def maintenance_list(request):
             unit = serializer.validated_data.get('unit')
             if not unit or unit.pk not in staff_unit_ids(request.user):
                 return forbidden()
-        serializer.save()
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+        job = serializer.save()
+        return Response(MaintenanceJobSerializer(job).data, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['GET'])
+@permission_classes([SmartNestAuthenticated])
+def maintenance_assignees(request):
+    if request.user.role not in ('admin', 'manager', 'staff'):
+        return forbidden()
+    users = assignable_maintenance_users(request.user).order_by('username')
+    return Response(CommunicationContactSerializer(users, many=True).data)
 
 
 @api_view(['GET', 'PATCH'])
@@ -810,15 +878,10 @@ def maintenance_list(request):
 def maintenance_detail(request, pk):
     if request.user.role not in ('manager', 'staff', 'maintenance', 'tenant'):
         return forbidden()
-    jobs = MaintenanceJob.objects.select_related('property', 'unit', 'reported_by_user')
-    if request.user.role == 'manager':
-        jobs = manager_scope(jobs, request.user)
-    elif request.user.role == 'staff':
-        jobs = jobs.filter(unit_id__in=staff_unit_ids(request.user))
-    elif request.user.role == 'maintenance':
-        jobs = jobs.filter(assignee__in=[request.user.username, request.user.email])
-    elif request.user.role == 'tenant':
-        jobs = jobs.filter(reported_by_user=request.user)
+    jobs = MaintenanceJob.objects.select_related(
+        'property', 'unit', 'reported_by_user', 'assigned_to', 'approved_by',
+    )
+    jobs = maintenance_scope(jobs, request.user)
     try:
         job = jobs.get(pk=pk)
     except MaintenanceJob.DoesNotExist:
@@ -827,8 +890,12 @@ def maintenance_detail(request, pk):
     if request.method == 'GET':
         return Response(MaintenanceJobSerializer(job).data)
     if request.user.role == 'maintenance':
+        if job.status not in ('assigned', 'in_progress'):
+            return Response({'error': 'Only approved work orders can be updated.'}, status=status.HTTP_400_BAD_REQUEST)
         serializer = MaintenanceVendorUpdateSerializer(job, data=request.data, partial=True)
-    elif request.user.role == 'manager':
+    elif request.user.role in ('manager', 'staff'):
+        if job.status == 'pending_approval':
+            return Response({'error': 'Use the approval action to process tenant requests.'}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
         serializer = MaintenanceJobSerializer(job, data=request.data, partial=True)
     else:
         return forbidden()
@@ -841,6 +908,94 @@ def maintenance_detail(request, pk):
         serializer.save()
         return Response(MaintenanceJobSerializer(job).data)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['POST'])
+@permission_classes([SmartNestAuthenticated])
+def maintenance_approve(request, pk):
+    if request.user.role not in ('manager', 'staff'):
+        return forbidden()
+    jobs = MaintenanceJob.objects.select_related('property', 'unit')
+    jobs = maintenance_scope(jobs, request.user)
+    try:
+        job = jobs.get(pk=pk)
+    except MaintenanceJob.DoesNotExist:
+        return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+    if job.status != 'pending_approval':
+        return Response({'error': 'Only requests awaiting approval can be approved.'}, status=status.HTTP_400_BAD_REQUEST)
+    serializer = MaintenanceApprovalSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    assigned_to = serializer.validated_data.get('assigned_to')
+    if assigned_to and not assignable_maintenance_users(request.user).filter(pk=assigned_to.pk).exists():
+        return Response({'assigned_to': ['Choose a maintenance team member linked to this portfolio.']}, status=status.HTTP_400_BAD_REQUEST)
+    if not assigned_to:
+        assigned_to = assignable_maintenance_users(request.user).order_by('id').first()
+    job.status = 'assigned'
+    job.approved_by = request.user
+    job.approved_at = timezone.now()
+    job.manager_notes = serializer.validated_data.get('note', '').strip()
+    job.assigned_to = assigned_to
+    job.assignee = assigned_to.username if assigned_to else 'Property management'
+    job.save(update_fields=[
+        'status', 'approved_by', 'approved_at', 'manager_notes', 'assigned_to', 'assignee',
+    ])
+    return Response(MaintenanceJobSerializer(job).data)
+
+
+@api_view(['POST'])
+@permission_classes([SmartNestAuthenticated])
+def maintenance_reject(request, pk):
+    if request.user.role not in ('manager', 'staff'):
+        return forbidden()
+    jobs = MaintenanceJob.objects.select_related('property', 'unit')
+    jobs = maintenance_scope(jobs, request.user)
+    try:
+        job = jobs.get(pk=pk)
+    except MaintenanceJob.DoesNotExist:
+        return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+    if job.status != 'pending_approval':
+        return Response({'error': 'Only requests awaiting approval can be declined.'}, status=status.HTTP_400_BAD_REQUEST)
+    serializer = MaintenanceRejectionSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    job.status = 'rejected'
+    job.approved_by = request.user
+    job.approved_at = timezone.now()
+    job.manager_notes = serializer.validated_data.get('reason', '').strip()
+    job.save(update_fields=['status', 'approved_by', 'approved_at', 'manager_notes'])
+    return Response(MaintenanceJobSerializer(job).data)
+
+
+@api_view(['GET'])
+@permission_classes([SmartNestAuthenticated])
+def maintenance_photo(request, pk):
+    if request.user.role not in ('manager', 'staff', 'maintenance', 'tenant'):
+        return forbidden()
+    jobs = MaintenanceJob.objects.all()
+    jobs = maintenance_scope(jobs, request.user)
+    try:
+        job = jobs.get(pk=pk)
+    except MaintenanceJob.DoesNotExist:
+        return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+    if not job.damage_photo:
+        return Response({'error': 'No damage photo is attached to this request.'}, status=status.HTTP_404_NOT_FOUND)
+    photo = job.damage_photo.open('rb')
+    signature = photo.read(12)
+    photo.seek(0)
+    if signature.startswith(b'\xff\xd8\xff'):
+        content_type = 'image/jpeg'
+    elif signature.startswith(b'\x89PNG\r\n\x1a\n'):
+        content_type = 'image/png'
+    elif signature.startswith(b'RIFF') and signature[8:12] == b'WEBP':
+        content_type = 'image/webp'
+    else:
+        photo.close()
+        return Response({'error': 'The stored damage photo is invalid.'}, status=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE)
+    response = FileResponse(photo, content_type=content_type)
+    response['Cache-Control'] = 'private, no-store'
+    response['X-Content-Type-Options'] = 'nosniff'
+    return response
 
 
 @api_view(['GET', 'POST'])
