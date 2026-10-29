@@ -74,7 +74,7 @@ export default function JoinTenantPage() {
         await login({ email, password });
         router.replace("/dashboard");
       } catch {
-        setError("Invitation accepted. Your account is ready; please sign in with the password you just created.");
+        setError("Check your email to confirm your account, then sign in to accept the invitation. The invitation must still be valid when you sign in.");
       }
     } catch {
       setError("We couldn’t accept this invitation. Confirm the email and try again, or ask your manager for a new link.");

@@ -5,12 +5,20 @@ Django settings for smartnest_api project.
 from pathlib import Path
 from datetime import timedelta
 import os
+from dotenv import load_dotenv
+from django.core.exceptions import ImproperlyConfigured
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / '.env.local', override=False)
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-smartnest-dev-secret-key-change-in-production'
+# One stable, private value must be shared by every process in a deployment.
+# No fallback: replacing the committed key invalidates its existing signatures.
+SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', '')
+if len(SECRET_KEY.strip()) < 50 or SECRET_KEY.startswith('django-insecure-'):
+    raise ImproperlyConfigured(
+        'Set DJANGO_SECRET_KEY to a private, randomly generated value of at least 50 characters.'
+    )
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
@@ -110,9 +118,18 @@ STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Django REST Framework
+SUPABASE_URL = os.getenv('SUPABASE_URL', '').rstrip('/')
+SUPABASE_PUBLISHABLE_KEY = os.getenv('SUPABASE_PUBLISHABLE_KEY', '')
+SUPABASE_AUTH_ENABLED = os.getenv('SUPABASE_AUTH_ENABLED', 'false').lower() == 'true'
+if SUPABASE_AUTH_ENABLED and (
+    not SUPABASE_URL.startswith('https://') or not SUPABASE_PUBLISHABLE_KEY
+):
+    raise ImproperlyConfigured('Supabase Auth requires an HTTPS SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY.')
+
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'core.supabase_auth.SupabaseAuthentication' if SUPABASE_AUTH_ENABLED
+        else 'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',

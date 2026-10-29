@@ -29,7 +29,7 @@ function messageFrom(error: unknown, fallback: string) {
       return `Cannot reach the SmartNest API at ${API_BASE_URL}. Start the Django backend and try again.`;
     }
   }
-  return fallback;
+  return error instanceof Error ? error.message : fallback;
 }
 
 function LoginFormPage() {
@@ -42,7 +42,7 @@ function LoginFormPage() {
   const [success, setSuccess] = useState(
     searchParams.get("password_changed") === "1"
       ? "Your password has been updated. Sign in with your new password."
-      : "",
+      : searchParams.get("auth_error") === "1" ? "This confirmation link is invalid or expired. Please sign in or request a new link." : "",
   );
 
   const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
@@ -56,7 +56,9 @@ function LoginFormPage() {
         email: String(form.get("email") ?? ""),
         password: String(form.get("password") ?? ""),
       });
-      router.replace("/dashboard");
+      const next = searchParams.get("next");
+      router.replace(next && /^\/dashboard(?:[/?]|$)/.test(next) ? next : "/dashboard");
+      router.refresh();
     } catch (requestError) {
       setError(messageFrom(requestError, "We couldn’t sign you in. Check your details and try again."));
     } finally {
@@ -90,7 +92,7 @@ function LoginFormPage() {
       });
       formElement.reset();
       setCreatingAccount(false);
-      setSuccess("Account created. Your manager must link your tenant record before you can sign in.");
+      setSuccess("Check your email to confirm your account, then sign in. Your manager must link your tenant record before portal access is granted.");
     } catch (requestError) {
       setError(messageFrom(requestError, "We couldn’t create your account. Please try again."));
     } finally {

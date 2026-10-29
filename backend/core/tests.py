@@ -415,7 +415,8 @@ class MaintenanceVendorTests(TestCase):
             issue='Leaking pipe',
             reported_by='Manager',
             assignee=vendor.email,
-            status='logged',
+            assigned_to=vendor,
+            status='assigned',
             date='2026-01-01',
         )
         other_job = MaintenanceJob.objects.create(

@@ -1,8 +1,9 @@
 "use client";
 
-import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { authAPI, type User, type LoginCredentials, type RegisterData } from "@/lib/api";
+import { createClient } from "@/lib/supabase/client";
 
 interface AuthContextType {
   user: User | null;
@@ -11,7 +12,7 @@ interface AuthContextType {
   isLoading: boolean;
   login: (credentials: LoginCredentials) => Promise<void>;
   register: (data: RegisterData) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
   refreshProfile: () => Promise<void>;
 }
 
@@ -25,93 +26,72 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let active = true;
-    const timer = window.setTimeout(() => {
-      const storedToken = localStorage.getItem("access_token");
-      const storedUser = localStorage.getItem("user");
-      if (!storedToken) {
-        setIsLoading(false);
-        return;
-      }
-
-      setToken(storedToken);
-      if (storedUser) {
+    let generation = 0;
+    ["access_token", "refresh_token", "user"].forEach((key) => localStorage.removeItem(key));
+    const { data: { subscription } } = createClient().auth.onAuthStateChange((_event, session) => {
+      const current = ++generation;
+      // Run outside the SDK callback, which holds the auth lock.
+      window.setTimeout(async () => {
+        if (!active || current !== generation) return;
+        setUser(null);
+        setToken(session?.access_token ?? null);
         try {
-          setUser(JSON.parse(storedUser) as User);
+          if (session) {
+            const { data } = await authAPI.me();
+            if (active && current === generation) setUser(data);
+          }
         } catch {
-          localStorage.removeItem("user");
+          if (active && current === generation) setUser(null);
+        } finally {
+          if (active && current === generation) setIsLoading(false);
         }
-      }
-
-      authAPI.me()
-        .then(({ data }) => {
-          if (!active) return;
-          setUser(data);
-          localStorage.setItem("user", JSON.stringify(data));
-        })
-        .catch((error: { response?: { status?: number } }) => {
-          if (!active || error.response?.status !== 401) return;
-          localStorage.removeItem("access_token");
-          localStorage.removeItem("refresh_token");
-          localStorage.removeItem("user");
-          setToken(null);
-          setUser(null);
-        })
-        .finally(() => {
-          if (active) setIsLoading(false);
-        });
-    }, 0);
-    return () => {
-      active = false;
-      window.clearTimeout(timer);
-    };
+      }, 0);
+    });
+    return () => { active = false; subscription.unsubscribe(); };
   }, []);
 
-  useEffect(() => {
-    const expireSession = () => {
-      localStorage.removeItem("access_token");
-      localStorage.removeItem("refresh_token");
-      localStorage.removeItem("user");
-      setToken(null);
-      setUser(null);
-      router.replace("/login");
-    };
-    window.addEventListener("smartnest:session-expired", expireSession);
-    return () => window.removeEventListener("smartnest:session-expired", expireSession);
-  }, [router]);
-
   const login = useCallback(async (credentials: LoginCredentials) => {
-    const response = await authAPI.login(credentials);
-    const { user: userData, tokens } = response.data;
-    localStorage.setItem("access_token", tokens.access);
-    localStorage.setItem("refresh_token", tokens.refresh);
-    localStorage.setItem("user", JSON.stringify(userData));
-    setToken(tokens.access);
-    setUser(userData);
+    const supabase = createClient();
+    const { data, error } = await supabase.auth.signInWithPassword(credentials);
+    if (error) throw error;
+    try {
+      const profile = await authAPI.me();
+      setToken(data.session.access_token);
+      setUser(profile.data);
+    } catch (error) {
+      await supabase.auth.signOut();
+      throw error;
+    }
   }, []);
 
   const register = useCallback(async (data: RegisterData) => {
-    await authAPI.register(data);
+    if (!data.consent) throw new Error("Consent is required to create an account.");
+    const { error } = await createClient().auth.signUp({
+      email: data.email, password: data.password,
+      options: {
+        emailRedirectTo: `${window.location.origin}/auth/callback`,
+        data: { username: data.username, phone: data.phone, consent: true, invitation_token: data.invitation_token },
+      },
+    });
+    if (error) throw error;
   }, []);
 
   const refreshProfile = useCallback(async () => {
     const response = await authAPI.me();
     setUser(response.data);
-    localStorage.setItem("user", JSON.stringify(response.data));
   }, []);
 
-  const logout = useCallback(() => {
-    localStorage.removeItem("access_token");
-    localStorage.removeItem("refresh_token");
-    localStorage.removeItem("user");
+  const logout = useCallback(async () => {
+    const { error } = await createClient().auth.signOut();
+    if (error) throw error;
     setToken(null);
     setUser(null);
     router.replace("/login");
+    router.refresh();
   }, [router]);
 
-  const isAuthenticated = !!token && !!user;
-
   return (
-    <AuthContext.Provider value={{ user, token, isAuthenticated, isLoading, login, register, logout, refreshProfile }}>
+    <AuthContext.Provider value={{ user, token, isAuthenticated: !!token && !!user, isLoading, login, register, logout, refreshProfile }}>
       {children}
     </AuthContext.Provider>
   );
@@ -119,8 +99,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
 export function useAuth() {
   const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error("useAuth must be used within an AuthProvider");
-  }
+  if (!context) throw new Error("useAuth must be used within an AuthProvider");
   return context;
 }

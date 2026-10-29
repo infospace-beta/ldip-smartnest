@@ -199,13 +199,15 @@ const maintenanceForm: CreateForm = {
     { name: "unit", label: "Unit", type: "select", options: (refs) => listOptions(refs, "units", "unit_number") },
     { name: "issue", label: "Issue", required: true, placeholder: "Describe the repair" },
     { name: "priority", label: "Priority", type: "select", required: true, options: () => [{ label: "Low", value: "low" }, { label: "Medium", value: "medium" }, { label: "High", value: "high" }] },
-    { name: "status", label: "Status", type: "select", required: true, options: () => [{ label: "Logged", value: "logged" }, { label: "In progress", value: "in_progress" }, { label: "Completed", value: "completed" }] },
+    { name: "status", label: "Status", type: "select", required: true, options: () => [{ label: "Assigned", value: "assigned" }, { label: "Logged", value: "logged" }, { label: "In progress", value: "in_progress" }, { label: "Completed", value: "completed" }] },
     { name: "reported_by", label: "Reported by", required: true },
-    { name: "assignee", label: "Assigned to", required: true },
+    { name: "assignee", label: "Service contact label", required: true },
+    { name: "assigned_to", label: "Provider account", type: "select", options: (refs) => [{ label: "Unassigned", value: "" }, ...listOptions(refs, "assignees", "username")] },
     { name: "date", label: "Reported date", type: "date", required: true },
   ],
   create: (values) => maintenanceAPI.create({
     ...values,
+    assigned_to: values.assigned_to ? numberValue(values, "assigned_to") : null,
     property: numberValue(values, "property"),
     unit: values.unit ? numberValue(values, "unit") : null,
   }),
@@ -334,8 +336,8 @@ const PAGE_CONFIGS: Record<string, PageConfig> = {
     title: "Maintenance", eyebrow: "Operations", description: "Track service work orders, priority and resolution status.", icon: "maintenance",
     columns: [{ key: "job_id", label: "Work order" }, { key: "property_name", label: "Property" }, { key: "unit_number", label: "Unit" }, { key: "issue", label: "Issue" }, { key: "reported_by", label: "Reported by" }, { key: "priority", label: "Priority" }, { key: "assignee", label: "Assigned to" }, { key: "status", label: "Status" }, { key: "quote_amount", label: "Quote" }, { key: "confirmation_photo_url", label: "Completion photo" }],
     load: async () => {
-      const [jobs, properties, units] = await Promise.all([maintenanceAPI.list(), propertiesAPI.list(), unitsAPI.list()]);
-      return { rows: rowsOf(jobs.data), references: { properties: rowsOf(properties.data), units: rowsOf(units.data) } };
+      const [jobs, properties, units, assignees] = await Promise.all([maintenanceAPI.list(), propertiesAPI.list(), unitsAPI.list(), maintenanceAPI.assignees()]);
+      return { rows: rowsOf(jobs.data), references: { properties: rowsOf(properties.data), units: rowsOf(units.data), assignees: rowsOf(assignees.data) } };
     },
     forms: [maintenanceForm, tenantMaintenanceForm],
     filters: ["all", "assigned", "in_progress", "completed"],
@@ -901,6 +903,42 @@ function ServiceMaintenanceHistory({ jobs, onSaved, onViewProfile }: { jobs: Mai
   );
 }
 
+function MaintenanceAssignment({ job, assignees, onSaved }: {
+  job: MaintenanceJob;
+  assignees: CommunicationContact[];
+  onSaved: () => Promise<void>;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const save = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const account = String(new FormData(event.currentTarget).get("provider") ?? "");
+    setSaving(true);
+    setError("");
+    try {
+      await maintenanceAPI.update(job.id, {
+        assigned_to: account ? Number(account) : null,
+        ...(account && job.status === "logged" ? { status: "assigned" } : {}),
+      });
+      await onSaved();
+    } catch (failure) {
+      setError(getApiErrorMessage(failure, "The provider could not be assigned."));
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <form onSubmit={save}>
+      <select name="provider" aria-label={`Provider for ${job.job_id}`} defaultValue={job.assigned_to ?? ""}>
+        <option value="">Unassigned</option>
+        {assignees.map((provider) => <option key={provider.id} value={provider.id}>{provider.username}</option>)}
+      </select>
+      <button className="button button-secondary button-compact" type="submit" disabled={saving}>{saving ? "Saving…" : "Save provider"}</button>
+      {error && <p role="alert">{error}</p>}
+    </form>
+  );
+}
+
 export function MaintenancePage() {
   const { user } = useAuth();
   const role = user?.role ?? "";
@@ -952,7 +990,7 @@ export function MaintenancePage() {
   const openJobs = jobs.filter((job) => ["assigned", "in_progress", "logged"].includes(job.status));
   const completedJobs = jobs.filter((job) => job.status === "completed");
   const highPriorityJobs = jobs.filter((job) => job.priority === "high" && job.status !== "completed" && job.status !== "rejected");
-  const references: References = { properties: rowsOf(properties), units: rowsOf(units) };
+  const references: References = { properties: rowsOf(properties), units: rowsOf(units), assignees: rowsOf(assignees) };
   const viewProfile = (userId: number, name: string, hasAvatar?: boolean) => setSelectedProfile({ userId, name, hasAvatar });
   const description = role === "tenant"
     ? "Report an issue, choose how urgent it is, and follow your manager's approval and the service team's progress."
@@ -1019,6 +1057,7 @@ export function MaintenancePage() {
                           <td>
                             {job.assigned_to_name || job.assignee}
                             {job.assigned_to && <button className="profile-trigger" type="button" onClick={() => viewProfile(job.assigned_to!, job.assigned_to_name || job.assignee, job.assigned_to_has_avatar)}>View profile</button>}
+                            {job.status !== "pending_approval" && job.status !== "rejected" && <MaintenanceAssignment key={`${job.id}-${job.assigned_to}`} job={job} assignees={assignees} onSaved={load} />}
                           </td>
                           <td>{job.has_damage_photo ? <MaintenancePhotoButton jobId={job.id} label="View" /> : <span className="panel-description">None</span>}</td>
                         </tr>

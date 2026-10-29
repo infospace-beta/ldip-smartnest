@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.urls import path
 from . import views
 
@@ -64,3 +65,7 @@ urlpatterns = [
     path('unit-inspections/', views.unit_inspections_list, name='unit_inspections_list'),
     path('unit-inspections/<int:pk>/', views.unit_inspection_detail, name='unit_inspection_detail'),
 ]
+
+if settings.SUPABASE_AUTH_ENABLED:
+    legacy_auth_names = {'register', 'login', 'change_password', 'request_password_reset', 'confirm_password_reset'}
+    urlpatterns = [pattern for pattern in urlpatterns if pattern.name not in legacy_auth_names]

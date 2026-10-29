@@ -136,11 +136,8 @@ def staff_unit_ids(user):
 
 
 def maintenance_jobs_for(user):
-    """Work orders where the user is the named or linked service provider."""
-    return MaintenanceJob.objects.filter(
-        Q(assigned_to=user)
-        | Q(assignee__in=[user.username, user.email])
-    )
+    """Only an explicit account assignment grants provider access."""
+    return MaintenanceJob.objects.filter(assigned_to=user)
 
 
 def manager_for_staff(user):
@@ -174,10 +171,7 @@ def maintenance_scope(queryset, user):
         unit_ids = staff_unit_ids(user)
         return queryset.filter(unit_id__in=unit_ids) if unit_ids else queryset.none()
     if user.role == 'maintenance':
-        return queryset.filter(
-            Q(assigned_to=user)
-            | Q(assignee__in=[user.username, user.email])
-        )
+        return queryset.filter(assigned_to=user)
     if user.role == 'tenant':
         return queryset.filter(reported_by_user=user)
     return queryset.none()
@@ -196,8 +190,7 @@ def can_contact(sender, recipient):
                 or recipient.assigned_units.filter(property__owner=sender).exists()
                 or recipient.onboarded_by_id == sender.id
                 or MaintenanceJob.objects.filter(
-                    Q(assigned_to=recipient)
-                    | Q(assignee__in=[recipient.username, recipient.email]),
+                    assigned_to=recipient,
                     property__owner=sender,
                 ).exists()
             )
@@ -215,8 +208,7 @@ def can_contact(sender, recipient):
                 reported_by_user=sender,
                 status__in=('assigned', 'in_progress', 'completed'),
             ).filter(
-                Q(assigned_to=recipient)
-                | Q(assignee__in=[recipient.username, recipient.email]),
+                assigned_to=recipient,
             ).exists()
         return False
     if sender.role == 'staff':
@@ -233,8 +225,7 @@ def can_contact(sender, recipient):
             return MaintenanceJob.objects.filter(
                 unit_id__in=unit_ids,
             ).filter(
-                Q(assigned_to=recipient)
-                | Q(assignee__in=[recipient.username, recipient.email]),
+                assigned_to=recipient,
             ).exists()
         return False
     if sender.role == 'maintenance':
@@ -859,6 +850,9 @@ def maintenance_list(request):
             unit = serializer.validated_data.get('unit')
             if not unit or unit.pk not in staff_unit_ids(request.user):
                 return forbidden()
+        assigned_to = serializer.validated_data.get('assigned_to')
+        if assigned_to and not assignable_maintenance_users(request.user).filter(pk=assigned_to.pk).exists():
+            return Response({'assigned_to': ['Choose a maintenance team member linked to this portfolio.']}, status=status.HTTP_400_BAD_REQUEST)
         job = serializer.save()
         return Response(MaintenanceJobSerializer(job).data, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -905,6 +899,13 @@ def maintenance_detail(request, pk):
             and serializer.validated_data.get('property', job.property).owner_id != request.user.id
         ):
             return forbidden()
+        if request.user.role == 'staff':
+            unit = serializer.validated_data.get('unit', job.unit)
+            if not unit or unit.pk not in staff_unit_ids(request.user):
+                return forbidden()
+        assigned_to = serializer.validated_data.get('assigned_to')
+        if assigned_to and not assignable_maintenance_users(request.user).filter(pk=assigned_to.pk).exists():
+            return Response({'assigned_to': ['Choose a maintenance team member linked to this portfolio.']}, status=status.HTTP_400_BAD_REQUEST)
         serializer.save()
         return Response(MaintenanceJobSerializer(job).data)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

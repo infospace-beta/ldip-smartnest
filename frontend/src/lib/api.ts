@@ -1,4 +1,5 @@
-import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
+import axios, { InternalAxiosRequestConfig } from "axios";
+import { createClient } from "@/lib/supabase/client";
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
@@ -28,51 +29,14 @@ export function getApiErrorMessage(error: unknown, fallback: string): string {
   return error.message || fallback;
 }
 
-api.interceptors.request.use(
-  (config: InternalAxiosRequestConfig) => {
-    const token = typeof window !== "undefined" ? localStorage.getItem("access_token") : null;
-    if (token && config.headers) {
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-    return config;
-  },
-  (error) => Promise.reject(error)
-);
-
-api.interceptors.response.use(
-  (response) => response,
-  async (error: AxiosError) => {
-    const originalRequest = error.config as InternalAxiosRequestConfig & { _retry?: boolean };
-    if (error.response?.status === 401 && !originalRequest._retry) {
-      originalRequest._retry = true;
-      const refreshToken = typeof window !== "undefined" ? localStorage.getItem("refresh_token") : null;
-      if (refreshToken) {
-        try {
-          const { data } = await axios.post(`${API_BASE_URL}/auth/token/refresh/`, { refresh: refreshToken });
-          localStorage.setItem("access_token", data.access);
-          localStorage.setItem("refresh_token", data.refresh);
-          if (originalRequest.headers) {
-            originalRequest.headers.Authorization = `Bearer ${data.access}`;
-          }
-          return api(originalRequest);
-        } catch (refreshError) {
-          localStorage.removeItem("access_token");
-          localStorage.removeItem("refresh_token");
-          localStorage.removeItem("user");
-          if (typeof window !== "undefined") {
-            window.dispatchEvent(new Event("smartnest:session-expired"));
-          }
-          return Promise.reject(refreshError);
-        }
-      } else if (typeof window !== "undefined") {
-        localStorage.removeItem("access_token");
-        localStorage.removeItem("user");
-        window.dispatchEvent(new Event("smartnest:session-expired"));
-      }
-    }
-    return Promise.reject(error);
+api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
+  if (typeof window !== "undefined") {
+    const { data: { session }, error } = await createClient().auth.getSession();
+    if (error) throw error;
+    if (session) config.headers.Authorization = `Bearer ${session.access_token}`;
   }
-);
+  return config;
+});
 
 export default api;
 
@@ -321,8 +285,6 @@ export interface DashboardStats {
 }
 
 export const authAPI = {
-  login: (credentials: LoginCredentials) => api.post<AuthResponse>("/auth/login/", credentials),
-  register: (data: RegisterData) => api.post<RegisterResponse>("/auth/register/", data),
   me: () => api.get<User>("/auth/me/"),
   updateProfile: (data: Pick<User, "username" | "phone"> & { avatar_image?: File }) => {
     if (!data.avatar_image) {
@@ -336,12 +298,37 @@ export const authAPI = {
       headers: { "Content-Type": "multipart/form-data" },
     });
   },
-  changePassword: (data: { current_password: string; new_password: string; confirm_password: string }) =>
-    api.post<{ message: string }>("/auth/password/change/", data),
-  requestPasswordReset: (email: string) =>
-    api.post<{ message: string }>("/auth/password/reset/", { email }),
-  confirmPasswordReset: (data: { uid: string; token: string; new_password: string; confirm_password: string }) =>
-    api.post<{ message: string }>("/auth/password/reset/confirm/", data),
+  changePassword: async (data: { current_password: string; new_password: string; confirm_password: string }) => {
+    if (data.new_password !== data.confirm_password) throw new Error("The passwords don't match.");
+    const supabase = createClient();
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    if (userError || !user?.email) throw userError ?? new Error("Please sign in again.");
+    const { error: loginError } = await supabase.auth.signInWithPassword({ email: user.email, password: data.current_password });
+    if (loginError) throw loginError;
+    const { error } = await supabase.auth.updateUser({ password: data.new_password });
+    if (error) throw error;
+    const { error: logoutError } = await supabase.auth.signOut();
+    if (logoutError) throw logoutError;
+    return { data: { message: "Your password has been updated. Sign in again." } };
+  },
+  requestPasswordReset: async (email: string) => {
+    const { error } = await createClient().auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/auth/callback?next=/reset-password`,
+    });
+    if (error) throw error;
+    return { data: { message: "If an active account uses that email, a password reset link has been sent." } };
+  },
+  confirmPasswordReset: async (data: { new_password: string; confirm_password: string }) => {
+    if (data.new_password !== data.confirm_password) throw new Error("The passwords don't match.");
+    const supabase = createClient();
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    if (userError || !user) throw userError ?? new Error("Request a new password reset link.");
+    const { error } = await supabase.auth.updateUser({ password: data.new_password });
+    if (error) throw error;
+    const { error: logoutError } = await supabase.auth.signOut();
+    if (logoutError) throw logoutError;
+    return { data: { message: "Your password has been updated. Sign in again." } };
+  },
 };
 
 export const dashboardAPI = {

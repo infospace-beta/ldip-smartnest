@@ -1,15 +1,21 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useState, type FormEvent } from "react";
+import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useState, type FormEvent } from "react";
 import { authAPI } from "@/lib/api";
+import { createClient } from "@/lib/supabase/client";
 
 function ResetPasswordFormPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const uid = searchParams.get("uid") ?? "";
-  const token = searchParams.get("token") ?? "";
+  const [validSession, setValidSession] = useState<boolean | null>(null);
+  useEffect(() => {
+    let active = true;
+    void createClient().auth.getUser().then(({ data, error }) => {
+      if (active) setValidSession(!error && !!data.user);
+    }).catch(() => { if (active) setValidSession(false); });
+    return () => { active = false; };
+  }, []);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -26,8 +32,6 @@ function ResetPasswordFormPage() {
     setError("");
     try {
       await authAPI.confirmPasswordReset({
-        uid,
-        token,
         new_password: newPassword,
         confirm_password: confirmPassword,
       });
@@ -57,7 +61,7 @@ function ResetPasswordFormPage() {
         <section className="auth-content" aria-live="polite">
           <div className="page-eyebrow">Secure account recovery</div>
           <h2>Reset your password</h2>
-          {!uid || !token ? (
+          {validSession === null ? <div role="status">Checking your reset link…</div> : !validSession ? (
             <div className="auth-message" role="alert">This reset link is incomplete. <Link href="/forgot-password">Request another link</Link>.</div>
           ) : (
             <>
