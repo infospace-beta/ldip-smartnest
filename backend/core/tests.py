@@ -1,4 +1,12 @@
-from django.test import TestCase
+import re
+import tempfile
+from urllib.parse import urlparse, parse_qs
+
+from django.core import mail
+from django.core.cache import cache
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import TestCase, override_settings
+from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.test import APIClient
 
 from .models import MaintenanceJob, Payment, Property, Tenant, TenantInvitation, Unit, User
@@ -117,6 +125,8 @@ class TenantAccessTests(TestCase):
             password='secure-password',
             role='manager',
         )
+        self.property.owner = manager
+        self.property.save(update_fields=['owner'])
         self.unit.status = 'vacant'
         self.unit.save(update_fields=['status'])
         self.tenant.status = 'pending'
@@ -190,6 +200,109 @@ class TenantAccessTests(TestCase):
             format='json',
         )
         self.assertEqual(created_job.status_code, 201, created_job.data)
+
+    def test_manager_sees_only_owned_property_records(self):
+        manager = User.objects.create_user(
+            username='owner-manager',
+            email='owner@example.com',
+            password='secure-password',
+            role='manager',
+        )
+        other_manager = User.objects.create_user(
+            username='other-manager',
+            email='other-manager@example.com',
+            password='secure-password',
+            role='manager',
+        )
+        self.property.owner = manager
+        self.property.save(update_fields=['owner'])
+        self.other_property.owner = other_manager
+        self.other_property.save(update_fields=['owner'])
+        client = APIClient()
+        client.force_authenticate(user=manager)
+
+        self.assertEqual([row['name'] for row in client.get('/api/properties/').data], ['Green Court'])
+        self.assertEqual([row['name'] for row in client.get('/api/tenants/').data], ['Jane Doe'])
+        self.assertEqual(
+            client.get(f'/api/properties/{self.other_property.id}/').status_code,
+            404,
+        )
+        denied_unit = client.post(
+            '/api/units/',
+            {
+                'property': self.other_property.id,
+                'unit_number': 'A-9',
+                'unit_type': 'Studio',
+                'rent': '10000',
+            },
+            format='json',
+        )
+        self.assertEqual(denied_unit.status_code, 403)
+        job = MaintenanceJob.objects.create(
+            job_id='OWNED-WO-1',
+            property=self.property,
+            unit=self.unit,
+            issue='Leaking tap',
+            reported_by='Tenant',
+            assignee='Maintenance vendor',
+            date='2026-01-02',
+        )
+        denied_reassignment = client.patch(
+            f'/api/maintenance/{job.id}/',
+            {'property': self.other_property.id, 'unit': self.other_unit.id},
+            format='json',
+        )
+        self.assertEqual(denied_reassignment.status_code, 403)
+
+    def test_check_in_photo_is_saved_and_only_available_to_authorized_property_users(self):
+        manager = User.objects.create_user(
+            username='photo-manager',
+            email='photo-manager@example.com',
+            password='secure-password',
+            role='manager',
+        )
+        self.property.owner = manager
+        self.property.save(update_fields=['owner'])
+        self.unit.status = 'vacant'
+        self.unit.save(update_fields=['status'])
+        self.tenant.status = 'pending'
+        self.tenant.save(update_fields=['status'])
+        image = SimpleUploadedFile(
+            'handover.png',
+            b'\x89PNG\r\n\x1a\n' + b'\x00' * 12,
+            content_type='image/png',
+        )
+        client = APIClient()
+        client.force_authenticate(user=manager)
+        with tempfile.TemporaryDirectory() as media_root:
+            with override_settings(MEDIA_ROOT=media_root):
+                response = client.post(
+                    '/api/tenancy-events/',
+                    {
+                        'tenant': self.tenant.id,
+                        'unit': self.unit.id,
+                        'action': 'check_in',
+                        'evidence_upload': image,
+                    },
+                    format='multipart',
+                )
+                self.assertEqual(response.status_code, 201, response.data)
+                self.assertTrue(response.data['evidence_photo'])
+                photo = client.get(f"/api/tenancy-events/{response.data['id']}/photo/")
+                self.assertEqual(photo.status_code, 200)
+                self.assertIn(b'\x89PNG', b''.join(photo.streaming_content))
+
+                other_manager = User.objects.create_user(
+                    username='unrelated-manager',
+                    email='unrelated-manager@example.com',
+                    password='secure-password',
+                    role='manager',
+                )
+                client.force_authenticate(user=other_manager)
+                self.assertEqual(
+                    client.get(f"/api/tenancy-events/{response.data['id']}/photo/").status_code,
+                    404,
+                )
 
 
 class MaintenanceVendorTests(TestCase):
@@ -304,18 +417,18 @@ class TenantRegistrationTests(TestCase):
             400,
         )
 
-        property_record = Property.objects.create(name='Green Court', location='Nairobi')
-        unit = Unit.objects.create(
-            property=property_record,
-            unit_number='A-2',
-            unit_type='Studio',
-            rent='20000',
-        )
         manager = User.objects.create_user(
             username='manager',
             email='manager@example.com',
             password='secure-password',
             role='manager',
+        )
+        property_record = Property.objects.create(name='Green Court', location='Nairobi', owner=manager)
+        unit = Unit.objects.create(
+            property=property_record,
+            unit_number='A-2',
+            unit_type='Studio',
+            rent='20000',
         )
         client.force_authenticate(user=manager)
         linked = client.post(
@@ -352,6 +465,8 @@ class TenantRegistrationTests(TestCase):
             role='manager',
         )
         property_record = Property.objects.create(name='Invite Court', location='Nairobi')
+        property_record.owner = manager
+        property_record.save(update_fields=['owner'])
         unit = Unit.objects.create(
             property=property_record,
             unit_number='B-1',
@@ -469,6 +584,8 @@ class RoleAndCommunicationTests(TestCase):
             portal_access_granted=True,
         )
         self.property = Property.objects.create(name='Green Court', location='Nairobi')
+        self.property.owner = self.manager
+        self.property.save(update_fields=['owner'])
         self.unit = Unit.objects.create(
             property=self.property,
             unit_number='A-1',
@@ -535,6 +652,38 @@ class RoleAndCommunicationTests(TestCase):
             404,
         )
 
+    def test_admin_can_assign_properties_and_managers_see_only_their_own(self):
+        other_manager = User.objects.create_user(
+            username='other-manager',
+            email='other-manager@example.com',
+            password='secure-password',
+            role='manager',
+        )
+        other_property = Property.objects.create(
+            name='Blue Court',
+            location='Nairobi',
+            owner=other_manager,
+        )
+        self.client.force_authenticate(user=self.admin)
+        assigned = self.client.patch(
+            f'/api/users/{self.manager.id}/',
+            {'managed_properties': [self.property.id]},
+            format='json',
+        )
+        self.assertEqual(assigned.status_code, 200, assigned.data)
+        self.assertEqual(assigned.data['managed_property_ids'], [self.property.id])
+        self.assertEqual(self.client.get('/api/properties/').status_code, 403)
+
+        self.client.force_authenticate(user=self.manager)
+        visible = self.client.get('/api/properties/')
+        self.assertEqual(visible.status_code, 200)
+        self.assertEqual([item['name'] for item in visible.data], ['Green Court'])
+        self.assertEqual(
+            self.client.get(f'/api/properties/{other_property.id}/').status_code,
+            404,
+        )
+        self.assertEqual(self.client.get('/api/users/').status_code, 403)
+
     def test_manager_can_onboard_staff_and_maintenance_only(self):
         self.client.force_authenticate(user=self.manager)
         staff_response = self.client.post(
@@ -544,6 +693,7 @@ class RoleAndCommunicationTests(TestCase):
                 'email': 'new-staff@example.com',
                 'password': 'Staff-password-2',
                 'role': 'staff',
+                'assigned_units': [self.unit.id],
             },
             format='json',
         )
@@ -551,7 +701,7 @@ class RoleAndCommunicationTests(TestCase):
         staff_user = User.objects.get(email='new-staff@example.com')
         self.assertEqual(staff_user.role, 'staff')
         self.assertTrue(staff_user.check_password('Staff-password-2'))
-        self.assertFalse(staff_user.assigned_units.exists())
+        self.assertEqual(list(staff_user.assigned_units.values_list('id', flat=True)), [self.unit.id])
 
         maintenance_response = self.client.post(
             '/api/team/onboarding/',
@@ -588,3 +738,81 @@ class RoleAndCommunicationTests(TestCase):
 
         self.client.force_authenticate(user=self.admin)
         self.assertEqual(self.client.get('/api/communication/conversations/').data, [])
+
+
+class AccountSecurityTests(TestCase):
+    def setUp(self):
+        cache.clear()
+        mail.outbox = []
+        self.user = User.objects.create_user(
+            username='account-holder',
+            email='account-holder@example.com',
+            password='Original-password-1',
+            role='manager',
+        )
+        self.client = APIClient()
+
+    @override_settings(
+        EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
+        FRONTEND_URL='https://smartnest.test',
+    )
+    def test_password_reset_email_uses_generic_response_and_resets_password(self):
+        old_access = str(RefreshToken.for_user(self.user).access_token)
+        unknown = self.client.post(
+            '/api/auth/password/reset/',
+            {'email': 'nobody@example.com'},
+            format='json',
+        )
+        requested = self.client.post(
+            '/api/auth/password/reset/',
+            {'email': self.user.email},
+            format='json',
+        )
+        self.assertEqual(unknown.status_code, 200)
+        self.assertEqual(requested.status_code, 200)
+        self.assertEqual(unknown.data['message'], requested.data['message'])
+        self.assertEqual(len(mail.outbox), 1)
+
+        reset_url = re.search(r'https://smartnest\.test/reset-password\?[^\s]+', mail.outbox[0].body)
+        self.assertIsNotNone(reset_url)
+        query = parse_qs(urlparse(reset_url.group(0)).query)
+        response = self.client.post(
+            '/api/auth/password/reset/confirm/',
+            {
+                'uid': query['uid'][0],
+                'token': query['token'][0],
+                'new_password': 'New-secure-password-2',
+                'confirm_password': 'New-secure-password-2',
+            },
+            format='json',
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password('New-secure-password-2'))
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {old_access}')
+        self.assertEqual(self.client.get('/api/auth/me/').status_code, 401)
+
+    def test_authenticated_password_change_checks_current_password_and_revokes_old_token(self):
+        access = str(RefreshToken.for_user(self.user).access_token)
+        self.client.credentials(HTTP_AUTHORIZATION=f'Bearer {access}')
+        denied = self.client.post(
+            '/api/auth/password/change/',
+            {
+                'current_password': 'wrong-password',
+                'new_password': 'Another-secure-password-3',
+                'confirm_password': 'Another-secure-password-3',
+            },
+            format='json',
+        )
+        self.assertEqual(denied.status_code, 400)
+        changed = self.client.post(
+            '/api/auth/password/change/',
+            {
+                'current_password': 'Original-password-1',
+                'new_password': 'Another-secure-password-3',
+                'confirm_password': 'Another-secure-password-3',
+            },
+            format='json',
+        )
+        self.assertEqual(changed.status_code, 200, changed.data)
+        self.assertEqual(self.client.get('/api/auth/me/').status_code, 401)

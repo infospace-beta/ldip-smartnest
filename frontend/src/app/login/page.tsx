@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { Suspense, useState, type FormEvent } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { API_BASE_URL } from "@/lib/api";
 import Icon from "@/components/Icon";
@@ -32,13 +32,18 @@ function messageFrom(error: unknown, fallback: string) {
   return fallback;
 }
 
-export default function LoginPage() {
+function LoginFormPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { login, register } = useAuth();
-  const [creatingAccount, setCreatingAccount] = useState(false);
+  const [creatingAccount, setCreatingAccount] = useState(searchParams.get("mode") === "register");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
+  const [success, setSuccess] = useState(
+    searchParams.get("password_changed") === "1"
+      ? "Your password has been updated. Sign in with your new password."
+      : "",
+  );
 
   const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -67,8 +72,8 @@ export default function LoginPage() {
     setSuccess("");
     const form = new FormData(event.currentTarget);
     const fullName = String(form.get("name") ?? "").trim();
-    const password = String(form.get("password") ?? "");
-    if (password !== String(form.get("confirmPassword") ?? "")) {
+    const password = String(form.get("new_password1") ?? "");
+    if (password !== String(form.get("new_password2") ?? "")) {
       setError("The passwords don’t match.");
       setLoading(false);
       return;
@@ -148,12 +153,12 @@ export default function LoginPage() {
             </div>
             <div className="field">
               <label htmlFor="account-password">Password</label>
-              <input className="auth-input" id="account-password" name="password" type="password" autoComplete={creatingAccount ? "new-password" : "current-password"} minLength={creatingAccount ? 8 : 1} required placeholder={creatingAccount ? "At least 8 characters" : "Enter your password"} />
+              <input className="auth-input" id="account-password" name={creatingAccount ? "new_password1" : "password"} type="password" autoComplete={creatingAccount ? "new-password" : "current-password"} minLength={creatingAccount ? 8 : 1} required placeholder={creatingAccount ? "Create a strong password" : "Enter your password"} />
             </div>
             {creatingAccount && (
               <div className="field">
                 <label htmlFor="account-confirm-password">Confirm password</label>
-                <input className="auth-input" id="account-confirm-password" name="confirmPassword" type="password" autoComplete="new-password" minLength={8} required placeholder="Enter your password again" />
+                <input className="auth-input" id="account-confirm-password" name="new_password2" type="password" autoComplete="new-password" minLength={8} required placeholder="Repeat your password" />
               </div>
             )}
             {creatingAccount && (
@@ -166,6 +171,7 @@ export default function LoginPage() {
               {loading ? "Please wait…" : creatingAccount ? "Create account" : "Sign in"}
             </button>
           </form>
+          {!creatingAccount && <Link className="forgot-password-link" href="/forgot-password">Forgot your password?</Link>}
           <div className="auth-switch">
             {creatingAccount ? "Already have an account? " : "New to SmartNest? "}
             <button type="button" onClick={switchMode}>{creatingAccount ? "Sign in" : "Create an account"}</button>
@@ -174,5 +180,13 @@ export default function LoginPage() {
         </section>
       </div>
     </main>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<main className="auth-page"><div className="loading-state" role="status">Loading sign in…</div></main>}>
+      <LoginFormPage />
+    </Suspense>
   );
 }

@@ -34,6 +34,13 @@ class User(AbstractUser):
 
 
 class Property(models.Model):
+    owner = models.ForeignKey(
+        User,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='managed_properties',
+    )
     name = models.CharField(max_length=200)
     location = models.CharField(max_length=200)
     cluster = models.CharField(max_length=100, default='Nairobi Cluster')
@@ -303,6 +310,7 @@ class TenancyEvent(models.Model):
     recorded_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name='recorded_tenancy_events')
     recorded_at = models.DateTimeField(auto_now_add=True)
     notes = models.TextField(blank=True)
+    evidence_photo = models.FileField(upload_to='tenancy-events/%Y/%m/', blank=True)
 
     class Meta:
         db_table = 'tenancy_events'

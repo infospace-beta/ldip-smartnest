@@ -5,6 +5,7 @@ from datetime import timedelta
 
 from rest_framework import serializers
 from django.contrib.auth import authenticate
+from django.contrib.auth.password_validation import validate_password
 from django.utils import timezone
 from .models import (
     User, Property, Unit, Tenant, Payment, Notice, MaintenanceJob, Staff, Expense,
@@ -122,12 +123,17 @@ class UserAccessSerializer(serializers.ModelSerializer):
     assigned_units = serializers.PrimaryKeyRelatedField(
         many=True, queryset=Unit.objects.all(), required=False,
     )
+    managed_properties = serializers.PrimaryKeyRelatedField(
+        many=True, queryset=Property.objects.all(), required=False, write_only=True,
+    )
+    managed_property_ids = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = [
             'id', 'username', 'email', 'role', 'property_cluster', 'is_active_user',
             'portal_access_granted', 'assigned_units',
+            'managed_properties', 'managed_property_ids',
         ]
         read_only_fields = ['id', 'username', 'email', 'portal_access_granted']
 
@@ -149,16 +155,60 @@ class UserAccessSerializer(serializers.ModelSerializer):
         role = attrs.get('role', getattr(self.instance, 'role', None))
         if role != 'staff' and attrs.get('assigned_units'):
             raise serializers.ValidationError({'assigned_units': 'Unit assignments are only available for staff.'})
+        if role != 'manager' and attrs.get('managed_properties'):
+            raise serializers.ValidationError({'managed_properties': 'Property ownership can only be assigned to managers.'})
         return attrs
+
+    def get_managed_property_ids(self, obj):
+        return list(obj.managed_properties.values_list('id', flat=True))
 
     def update(self, instance, validated_data):
         assigned_units = validated_data.pop('assigned_units', None)
+        managed_properties = validated_data.pop('managed_properties', None)
         user = super().update(instance, validated_data)
         if assigned_units is not None:
             user.assigned_units.set(assigned_units)
         elif user.role != 'staff':
             user.assigned_units.clear()
+        if managed_properties is not None:
+            Property.objects.filter(owner=user).update(owner=None)
+            Property.objects.filter(pk__in=[prop.pk for prop in managed_properties]).update(owner=user)
+        elif user.role != 'manager':
+            Property.objects.filter(owner=user).update(owner=None)
         return user
+
+
+class PasswordChangeSerializer(serializers.Serializer):
+    current_password = serializers.CharField(write_only=True)
+    new_password = serializers.CharField(write_only=True)
+    confirm_password = serializers.CharField(write_only=True)
+
+    def validate(self, attrs):
+        user = self.context['request'].user
+        if not user.check_password(attrs['current_password']):
+            raise serializers.ValidationError({'current_password': 'The current password is incorrect.'})
+        if attrs['new_password'] != attrs['confirm_password']:
+            raise serializers.ValidationError({'confirm_password': 'The passwords do not match.'})
+        validate_password(attrs['new_password'], user)
+        return attrs
+
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    uid = serializers.CharField()
+    token = serializers.CharField()
+    new_password = serializers.CharField(write_only=True)
+    confirm_password = serializers.CharField(write_only=True)
+
+    def validate(self, attrs):
+        if attrs['new_password'] != attrs['confirm_password']:
+            raise serializers.ValidationError({'confirm_password': 'The passwords do not match.'})
+        user = self.context.get('reset_user')
+        validate_password(attrs['new_password'], user)
+        return attrs
 
 
 class TeamMemberOnboardingSerializer(serializers.Serializer):
@@ -167,6 +217,9 @@ class TeamMemberOnboardingSerializer(serializers.Serializer):
     password = serializers.CharField(write_only=True, min_length=8)
     phone = serializers.CharField(max_length=20, required=False, allow_blank=True)
     role = serializers.ChoiceField(choices=[('staff', 'Staff'), ('maintenance', 'Maintenance')])
+    assigned_units = serializers.PrimaryKeyRelatedField(
+        many=True, queryset=Unit.objects.all(), required=False,
+    )
 
     def validate_username(self, value):
         if User.objects.filter(username=value).exists():
@@ -183,9 +236,23 @@ class TeamMemberOnboardingSerializer(serializers.Serializer):
             raise serializers.ValidationError('An account with this phone number already exists.')
         return value
 
+    def validate_assigned_units(self, value):
+        manager = self.context['request'].user
+        if any(unit.property.owner_id != manager.id for unit in value):
+            raise serializers.ValidationError('Only units in properties you manage can be assigned.')
+        return value
+
+    def validate(self, attrs):
+        if attrs['role'] == 'staff' and not attrs.get('assigned_units'):
+            raise serializers.ValidationError({'assigned_units': 'Assign at least one unit to this staff account.'})
+        return attrs
+
     def create(self, validated_data):
         password = validated_data.pop('password')
-        return User.objects.create_user(password=password, **validated_data)
+        assigned_units = validated_data.pop('assigned_units', [])
+        user = User.objects.create_user(password=password, **validated_data)
+        user.assigned_units.set(assigned_units)
+        return user
 
 
 class TenantInvitationSerializer(serializers.Serializer):
@@ -249,14 +316,34 @@ class TenancyEventSerializer(serializers.ModelSerializer):
     unit_number = serializers.CharField(source='unit.unit_number', read_only=True)
     property_name = serializers.CharField(source='unit.property.name', read_only=True)
     recorded_by_name = serializers.CharField(source='recorded_by.username', read_only=True)
+    evidence_photo = serializers.SerializerMethodField()
+    evidence_upload = serializers.FileField(write_only=True, required=False, allow_empty_file=False)
 
     class Meta:
         model = TenancyEvent
         fields = [
             'id', 'tenant', 'tenant_name', 'unit', 'unit_number', 'property_name',
             'action', 'recorded_by', 'recorded_by_name', 'recorded_at', 'notes',
+            'evidence_photo', 'evidence_upload',
         ]
         read_only_fields = ['id', 'recorded_by', 'recorded_by_name', 'recorded_at']
+
+    def get_evidence_photo(self, obj):
+        return bool(obj.evidence_photo)
+
+    def validate_evidence_upload(self, uploaded_file):
+        if uploaded_file.size > 5 * 1024 * 1024:
+            raise serializers.ValidationError('Photos must be 5 MB or smaller.')
+        signature = uploaded_file.read(12)
+        uploaded_file.seek(0)
+        is_image = (
+            signature.startswith(b'\xff\xd8\xff')
+            or signature.startswith(b'\x89PNG\r\n\x1a\n')
+            or (signature.startswith(b'RIFF') and signature[8:12] == b'WEBP')
+        )
+        if not is_image:
+            raise serializers.ValidationError('Upload a valid JPEG, PNG, or WebP image.')
+        return uploaded_file
 
     def validate(self, attrs):
         tenant = attrs['tenant']

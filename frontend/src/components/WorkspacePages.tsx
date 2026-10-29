@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import {
   authAPI,
@@ -702,6 +704,7 @@ function UserAccessRow({
   const [role, setRole] = useState(user.role);
   const [active, setActive] = useState(user.is_active_user);
   const [assignedUnits, setAssignedUnits] = useState(user.assigned_units.map(String));
+  const [managedProperties, setManagedProperties] = useState(user.managed_property_ids.map(String));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -714,6 +717,7 @@ function UserAccessRow({
         role,
         is_active_user: active,
         assigned_units: role === "staff" ? assignedUnits.map(Number) : [],
+        managed_properties: role === "manager" ? managedProperties.map(Number) : [],
       });
       await onSaved();
     } catch {
@@ -746,6 +750,14 @@ function UserAccessRow({
           </select>
         </label>
       )}
+      {role === "manager" && (
+        <label className="access-field access-assignment">
+          <span>Properties this manager owns</span>
+          <select multiple value={managedProperties} onChange={(event) => setManagedProperties(Array.from(event.currentTarget.selectedOptions, (option) => option.value))}>
+            {options.properties.map((property) => <option value={String(property.id)} key={property.id}>{property.name}{property.owner_id && property.owner_id !== user.id ? " · reassigned" : ""}</option>)}
+          </select>
+        </label>
+      )}
       <label className="access-active">
         <input type="checkbox" checked={active} disabled={isCurrentUser} onChange={(event) => setActive(event.target.checked)} />
         Active
@@ -760,7 +772,7 @@ function UserAccessRow({
 
 export function UserAccessPage() {
   const [users, setUsers] = useState<UserAccess[]>([]);
-  const [options, setOptions] = useState<UserAssignmentOptions>({ units: [] });
+  const [options, setOptions] = useState<UserAssignmentOptions>({ properties: [], units: [] });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -798,6 +810,7 @@ export function UserAccessPage() {
         icon="staff"
       />
       <div className="hint-card"><strong>Provisioning flow</strong>Users create tenant accounts from the sign-in page. A manager links tenant accounts to records; administrators grant staff, maintenance, manager (landlord), and admin roles here.</div>
+      <div className="hint-card"><strong>Property ownership</strong>Assign each managed property to its manager here. Managers only see records connected to their assigned properties; unassigned legacy properties remain visible to administrators until assigned.</div>
       {error && <div className="error-state" role="alert"><span>{error}</span><button className="button button-secondary" type="button" onClick={() => void load()}>Try again</button></div>}
       {loading ? <div className="loading-state" role="status">Loading user registry…</div> : !error && (
         <section className="panel user-access-panel">
@@ -813,9 +826,17 @@ export function UserAccessPage() {
 
 export function TeamOnboardingPage() {
   const [role, setRole] = useState<"staff" | "maintenance">("staff");
+  const [units, setUnits] = useState<Awaited<ReturnType<typeof unitsAPI.list>>["data"]>([]);
+  const [assignedUnits, setAssignedUnits] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+
+  useEffect(() => {
+    unitsAPI.list()
+      .then(({ data }) => setUnits(data))
+      .catch(() => setError("Could not load your units. Add a property and units before assigning staff."));
+  }, []);
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -831,8 +852,10 @@ export function TeamOnboardingPage() {
         password: String(form.get("password") ?? ""),
         phone: String(form.get("phone") ?? "").trim(),
         role,
+        assigned_units: role === "staff" ? assignedUnits.map(Number) : [],
       });
       formElement.reset();
+      setAssignedUnits([]);
       setSuccess(`${data.username} has been added as ${role === "staff" ? "staff" : "maintenance"}. Share the initial password with them securely.`);
     } catch {
       setError("Could not onboard this team member. Check that the email, username, phone, and required unit assignments are valid.");
@@ -878,6 +901,14 @@ export function TeamOnboardingPage() {
                 <span>Initial password</span>
                 <input name="password" type="password" required minLength={8} autoComplete="new-password" />
               </label>
+              {role === "staff" && (
+                <label className="field field-full">
+                  <span>Assigned units</span>
+                  <select multiple required value={assignedUnits} onChange={(event) => setAssignedUnits(Array.from(event.currentTarget.selectedOptions, (option) => option.value))}>
+                    {units.map((unit) => <option value={String(unit.id)} key={unit.id}>{unit.property_name} · {unit.unit_number}</option>)}
+                  </select>
+                </label>
+              )}
             </div>
             <div className="form-actions"><button className="button button-primary" type="submit" disabled={saving}>{saving ? "Creating account…" : "Create account"}</button></div>
         </form>
@@ -1027,10 +1058,17 @@ export function TenancyEventsPage() {
   const [selectedTenant, setSelectedTenant] = useState("");
   const [action, setAction] = useState<"check_in" | "check_out">("check_in");
   const [notes, setNotes] = useState("");
+  const [evidenceFile, setEvidenceFile] = useState<File | null>(null);
+  const [evidencePreview, setEvidencePreview] = useState("");
+  const [viewingEvidence, setViewingEvidence] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+
+  useEffect(() => () => {
+    if (evidencePreview) URL.revokeObjectURL(evidencePreview);
+  }, [evidencePreview]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1069,19 +1107,46 @@ export function TenancyEventsPage() {
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!tenant?.unit) return;
+    if (evidenceFile && evidenceFile.size > 5 * 1024 * 1024) {
+      setError("Photos must be 5 MB or smaller.");
+      return;
+    }
     setSaving(true);
     setError("");
     setSuccess("");
     try {
-      await tenancyEventsAPI.create({ tenant: tenant.id, unit: tenant.unit, action, notes });
+      await tenancyEventsAPI.create({
+        tenant: tenant.id,
+        unit: tenant.unit,
+        action,
+        notes,
+        ...(evidenceFile ? { evidence_upload: evidenceFile } : {}),
+      });
       setSuccess(action === "check_in" ? "Tenant checked in. Portal access remains controlled by the manager." : "Tenant checked out and their portal access is revoked.");
       setNotes("");
+      setEvidenceFile(null);
+      const photoInput = document.getElementById("handover-photo") as HTMLInputElement | null;
+      if (photoInput) photoInput.value = "";
       await load();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "The tenancy event could not be saved.");
     } finally {
       setSaving(false);
     }
+  };
+
+  const openEvidence = async (eventId: number) => {
+    try {
+      const { data } = await tenancyEventsAPI.photo(eventId);
+      setViewingEvidence(URL.createObjectURL(data));
+    } catch {
+      setError("Could not load this photo. Check your access and try again.");
+    }
+  };
+
+  const closeEvidence = () => {
+    if (viewingEvidence) URL.revokeObjectURL(viewingEvidence);
+    setViewingEvidence("");
   };
 
   return (
@@ -1097,6 +1162,29 @@ export function TenancyEventsPage() {
               <label className="field"><span>Tenant</span><select value={selectedTenant} onChange={(event) => setSelectedTenant(event.target.value)} required><option value="" disabled>Select tenant</option>{tenants.map((item) => <option value={item.id} key={item.id}>{item.name} · {item.property_name} {item.unit_number ? `· ${item.unit_number}` : ""}</option>)}</select></label>
               <label className="field"><span>Action</span><select value={action} onChange={(event) => setAction(event.target.value as "check_in" | "check_out")}><option value="check_in">Check in</option><option value="check_out">Check out</option></select></label>
               <label className="field field-full"><span>Notes</span><textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={3} placeholder="Optional handover notes" /></label>
+              <label className="field field-full">
+                <span>Handover photo (optional)</span>
+                <input
+                  id="handover-photo"
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  capture="environment"
+                  onChange={(event) => {
+                    const selected = event.currentTarget.files?.[0] ?? null;
+                    if (selected && !["image/jpeg", "image/png", "image/webp"].includes(selected.type)) {
+                      setError("Choose a JPEG, PNG, or WebP photo.");
+                      event.currentTarget.value = "";
+                      setEvidenceFile(null);
+                      return;
+                    }
+                    setEvidenceFile(selected);
+                    setEvidencePreview(selected ? URL.createObjectURL(selected) : "");
+                    setError("");
+                  }}
+                />
+                <small className="field-hint">Take a photo with your phone camera or choose an image. Maximum 5 MB.</small>
+                {evidencePreview && <Image className="handover-photo-preview" src={evidencePreview} alt="Selected handover evidence preview" width={720} height={520} unoptimized />}
+              </label>
             </div>
             {tenant && !tenant.unit && <div className="hint-card"><strong>No unit assigned</strong>Assign this tenant to a unit before recording a move.</div>}
             {tenant?.unit && !actionAvailable && <div className="hint-card"><strong>Action unavailable</strong>{action === "check_in" ? "Check-in requires a pending tenancy and a vacant unit." : "Check-out requires an active tenancy and an occupied unit."}</div>}
@@ -1106,8 +1194,9 @@ export function TenancyEventsPage() {
       </section>
       <section className="panel tenancy-events-panel">
         <div className="panel-heading"><div><h2 className="panel-title">Recent move events</h2><p className="panel-description">Check-in and check-out audit history for your access scope.</p></div></div>
-        {events.length ? <div className="table-wrap"><table><thead><tr><th>Action</th><th>Tenant</th><th>Property & unit</th><th>Recorded by</th><th>Date</th><th>Notes</th></tr></thead><tbody>{events.map((item) => <tr key={item.id}><td><span className={`status-pill ${item.action === "check_in" ? "green" : ""}`}>{item.action.replaceAll("_", " ")}</span></td><td>{item.tenant_name}</td><td>{item.property_name} · {item.unit_number}</td><td>{item.recorded_by_name}</td><td>{new Date(item.recorded_at).toLocaleString()}</td><td>{item.notes || "—"}</td></tr>)}</tbody></table></div> : <div className="empty-state"><strong>No move events yet</strong>Recorded check-ins and check-outs will be listed here.</div>}
+        {events.length ? <div className="table-wrap"><table><thead><tr><th>Action</th><th>Tenant</th><th>Property & unit</th><th>Recorded by</th><th>Date</th><th>Evidence</th><th>Notes</th></tr></thead><tbody>{events.map((item) => <tr key={item.id}><td><span className={`status-pill ${item.action === "check_in" ? "green" : ""}`}>{item.action.replaceAll("_", " ")}</span></td><td>{item.tenant_name}</td><td>{item.property_name} · {item.unit_number}</td><td>{item.recorded_by_name}</td><td>{new Date(item.recorded_at).toLocaleString()}</td><td>{item.evidence_photo ? <button className="button button-secondary button-compact" type="button" onClick={() => void openEvidence(item.id)}>View photo</button> : "—"}</td><td>{item.notes || "—"}</td></tr>)}</tbody></table></div> : <div className="empty-state"><strong>No move events yet</strong>Recorded check-ins and check-outs will be listed here.</div>}
       </section>
+      {viewingEvidence && <div className="evidence-overlay" role="presentation" onClick={closeEvidence}><section className="evidence-dialog" role="dialog" aria-modal="true" aria-label="Handover evidence photo" onClick={(event) => event.stopPropagation()}><button className="button button-secondary" type="button" onClick={closeEvidence}>Close photo</button><Image src={viewingEvidence} alt="Handover evidence" width={1200} height={900} unoptimized /></section></div>}
     </section>
   );
 }
@@ -1398,8 +1487,12 @@ export function AnalyticsPage() {
 
 export function ProfilePage() {
   const { user, refreshProfile } = useAuth();
+  const router = useRouter();
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  const [passwordSaving, setPasswordSaving] = useState(false);
+  const [passwordError, setPasswordError] = useState("");
+  const [passwordMessage, setPasswordMessage] = useState("");
   const name = user?.username || user?.email || "SmartNest user";
   const initials = name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase() ?? "").join("") || "S";
 
@@ -1419,6 +1512,44 @@ export function ProfilePage() {
       setMessage("We couldn’t update your profile. Check the details and try again.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const changePassword = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setPasswordSaving(true);
+    setPasswordError("");
+    setPasswordMessage("");
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const newPassword = String(form.get("new_password1") ?? "");
+    const confirmPassword = String(form.get("new_password2") ?? "");
+    if (newPassword !== confirmPassword) {
+      setPasswordError("The new passwords don’t match.");
+      setPasswordSaving(false);
+      return;
+    }
+    try {
+      await authAPI.changePassword({
+        current_password: String(form.get("current_password") ?? ""),
+        new_password: newPassword,
+        confirm_password: confirmPassword,
+      });
+      setPasswordMessage("Your password has been updated. Sign in again with your new password.");
+      localStorage.removeItem("access_token");
+      localStorage.removeItem("refresh_token");
+      localStorage.removeItem("user");
+      formElement.reset();
+      window.setTimeout(() => router.replace("/login?password_changed=1"), 900);
+    } catch (requestError) {
+      const response = typeof requestError === "object" && requestError !== null && "response" in requestError
+        ? (requestError as { response?: { data?: Record<string, unknown> } }).response
+        : undefined;
+      const errors = response?.data;
+      const firstError = errors ? Object.values(errors).flatMap((value) => Array.isArray(value) ? value : [value]).find((value) => typeof value === "string") : undefined;
+      setPasswordError(typeof firstError === "string" ? firstError : "We couldn’t update your password. Check the current password and try again.");
+    } finally {
+      setPasswordSaving(false);
     }
   };
 
@@ -1442,6 +1573,17 @@ export function ProfilePage() {
           <div className="form-actions"><button className="button button-primary" type="submit" disabled={saving}>{saving ? "Saving…" : "Save profile"}</button></div>
         </form>
       </section>
+      <section className="panel form-panel" id="password">
+        <div className="panel-heading"><div><h2 className="panel-title">Change your password</h2><p className="panel-description">Use a unique password. You’ll be asked to sign in again after changing it.</p></div></div>
+        {passwordError && <div className="auth-message" role="alert">{passwordError}</div>}
+        {passwordMessage && <div className="auth-message success" role="status">{passwordMessage}</div>}
+        <form className="auth-form password-change-form" onSubmit={changePassword}>
+          <div className="field"><label htmlFor="current-password">Current password</label><input className="auth-input" id="current-password" name="current_password" type="password" autoComplete="current-password" required /></div>
+          <div className="field"><label htmlFor="new-password">New password</label><input className="auth-input" id="new-password" name="new_password1" type="password" autoComplete="new-password" minLength={8} required /></div>
+          <div className="field"><label htmlFor="repeat-new-password">Repeat new password</label><input className="auth-input" id="repeat-new-password" name="new_password2" type="password" autoComplete="new-password" minLength={8} required /></div>
+          <div className="form-actions"><button className="button button-primary" type="submit" disabled={passwordSaving}>{passwordSaving ? "Updating…" : "Change password"}</button></div>
+        </form>
+      </section>
     </section>
   );
 }
@@ -1459,6 +1601,18 @@ export function HelpPage() {
     <section>
       <PageHeader title="Help & support" eyebrow="Account" description="Quick routes to common property operations." icon="help" />
       <div className="support-grid">{links.map((link) => <article className="panel support-card" key={link.href}><span className="metric-icon"><Icon name={link.icon} /></span><h3>{link.title}</h3><p>{link.description}</p><Link className="button button-secondary" href={link.href}>Open <Icon name="arrow" /></Link></article>)}</div>
+      <section className="panel role-workflow-panel">
+        <div className="panel-heading"><div><h2 className="panel-title">Who can see and manage what?</h2><p className="panel-description">Access follows the work people need to do—not every record in the system.</p></div></div>
+        <div className="role-workflow-list">
+          <p><strong>System administrator</strong><span>Manages accounts, roles, and which properties belong to each manager. Admin access to conversations and tenant records is limited unless needed for administration.</span></p>
+          <p><strong>Property manager</strong><span>Manages only assigned properties and their units, tenants, payments, expenses, maintenance, and handovers. Assigns staff to units and invites tenants.</span></p>
+          <p><strong>Staff</strong><span>Sees only assigned units and related tenant records. Can record inspections, check-ins, check-outs, and work orders for assigned units.</span></p>
+          <p><strong>Maintenance</strong><span>Sees work orders assigned to their account and can update progress, quote, and completion evidence.</span></p>
+          <p><strong>Tenant</strong><span>Sees their linked tenancy, payments, and maintenance requests. Can raise repair requests and contact permitted property contacts.</span></p>
+        </div>
+        <p className="panel-description role-workflow-note">This is a product access summary, not legal advice. In Kenya, the Data Protection Act 2019 requires personal data to be handled lawfully, fairly, transparently, for a specific purpose, and with appropriate safeguards. SmartNest’s owner remains responsible for confirming the lawful basis, notices, retention period, and access/rectification process for their use.</p>
+        <a className="button button-secondary" href="https://www.odpc.go.ke/data-protection-laws-kenya/" target="_blank" rel="noreferrer">Read Kenya ODPC guidance</a>
+      </section>
     </section>
   );
 }

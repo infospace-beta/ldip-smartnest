@@ -128,6 +128,7 @@ function DashboardShell({ children }: { children: ReactNode }) {
           </div>
           <div className="topbar-actions">
             <button className="icon-button" aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`} onClick={toggleTheme}><Icon name={theme === "dark" ? "sun" : "theme"} /></button>
+            <Link className="button button-secondary button-compact password-shortcut" href="/dashboard/profile#password">Change password</Link>
             <div className="topbar-profile">
               <span className="user-avatar">{avatar}</span>
               <span className="topbar-profile-copy"><span className="user-name">{displayName}</span><span className="user-role">{roleLabel(role)}</span></span>

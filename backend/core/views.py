@@ -1,13 +1,22 @@
 import hashlib
+import mimetypes
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import throttle_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.exceptions import AuthenticationFailed
+from rest_framework.throttling import AnonRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
+from django.conf import settings
+from django.contrib.auth.tokens import default_token_generator
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.db.models import Count, Sum
+from django.core.mail import send_mail
+from django.http import FileResponse
+from django.utils.encoding import force_bytes, force_str
+from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from django.utils import timezone
 from uuid import uuid4
 from .models import (
@@ -24,10 +33,16 @@ from .serializers import (
     TeamMemberOnboardingSerializer, TenantInvitationSerializer,
     CommunicationContactSerializer, ConversationSerializer, MessageSerializer,
     StartConversationSerializer, CreateMessageSerializer, TenancyEventSerializer,
+    PasswordChangeSerializer, PasswordResetConfirmSerializer,
+    PasswordResetRequestSerializer,
     MaintenanceVendorUpdateSerializer,
 )
 
 User = get_user_model()
+
+
+class PasswordResetThrottle(AnonRateThrottle):
+    scope = 'password_reset'
 
 
 class SmartNestAuthenticated(IsAuthenticated):
@@ -61,6 +76,23 @@ def tenant_record(user):
     return Tenant.objects.filter(user=user).first()
 
 
+def manager_scope(queryset, user):
+    if user.role != 'manager':
+        return queryset
+    lookups = {
+        Property: 'owner',
+        Unit: 'property__owner',
+        Tenant: 'property__owner',
+        Payment: 'tenant__property__owner',
+        MaintenanceJob: 'property__owner',
+        Expense: 'property__owner',
+        UnitInspection: 'unit__property__owner',
+        TenancyEvent: 'unit__property__owner',
+    }
+    lookup = lookups.get(queryset.model)
+    return queryset.filter(**{lookup: user}) if lookup else queryset.none()
+
+
 def apply_staff_cluster(queryset, user, lookup):
     if user.role != 'staff':
         return queryset
@@ -88,13 +120,23 @@ def can_contact(sender, recipient):
     if sender.role == 'admin':
         return True
     if sender.role == 'manager':
-        return recipient.role != 'admin'
+        return (
+            recipient.role != 'admin'
+            and (
+                Tenant.objects.filter(user=recipient, property__owner=sender).exists()
+                or recipient.assigned_units.filter(property__owner=sender).exists()
+                or MaintenanceJob.objects.filter(
+                    property__owner=sender,
+                    assignee__in=[recipient.username, recipient.email],
+                ).exists()
+            )
+        )
     if sender.role == 'tenant':
         tenant = tenant_record(sender)
         if not tenant or not tenant.unit_id:
             return False
         if recipient.role == 'manager':
-            return True
+            return tenant.property.owner_id == recipient.id
         if recipient.role == 'staff':
             return recipient.assigned_units.filter(pk=tenant.unit_id).exists()
         if recipient.role == 'maintenance':
@@ -106,7 +148,7 @@ def can_contact(sender, recipient):
     if sender.role == 'staff':
         assigned_unit_ids = sender.assigned_units.values_list('id', flat=True)
         if recipient.role == 'manager':
-            return True
+            return sender.assigned_units.filter(property__owner=recipient).exists()
         if recipient.role == 'tenant':
             return Tenant.objects.filter(user=recipient, unit_id__in=assigned_unit_ids).exists()
         if recipient.role == 'maintenance':
@@ -118,7 +160,7 @@ def can_contact(sender, recipient):
     if sender.role == 'maintenance':
         jobs = MaintenanceJob.objects.filter(assignee__in=[sender.username, sender.email])
         if recipient.role == 'manager':
-            return jobs.exists()
+            return jobs.filter(property__owner=recipient).exists()
         if recipient.role == 'staff':
             return jobs.filter(unit_id__in=recipient.assigned_units.values_list('id', flat=True)).exists()
         if recipient.role == 'tenant':
@@ -155,7 +197,7 @@ def create_tenant_invitation(request, pk):
     if request.user.role != 'manager':
         return forbidden()
     try:
-        tenant = Tenant.objects.get(pk=pk)
+        tenant = Tenant.objects.get(pk=pk, property__owner=request.user)
     except Tenant.DoesNotExist:
         return Response({'error': 'Tenant not found.'}, status=status.HTTP_404_NOT_FOUND)
     serializer = TenantInvitationSerializer(
@@ -217,6 +259,80 @@ def me(request):
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
+@api_view(['POST'])
+@permission_classes([AllowAny])
+@throttle_classes([PasswordResetThrottle])
+def request_password_reset(request):
+    serializer = PasswordResetRequestSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    user = User.objects.filter(
+        email__iexact=serializer.validated_data['email'],
+        is_active=True,
+        is_active_user=True,
+    ).first()
+    if user:
+        uid = urlsafe_base64_encode(force_bytes(user.pk))
+        token = default_token_generator.make_token(user)
+        reset_url = (
+            f"{settings.FRONTEND_URL.rstrip('/')}/reset-password"
+            f"?uid={uid}&token={token}"
+        )
+        send_mail(
+            'Reset your SmartNest password',
+            f'Use this link to reset your SmartNest password. It expires after a short time:\n\n{reset_url}\n\n'
+            'If you did not request this, you can ignore this email.',
+            settings.DEFAULT_FROM_EMAIL,
+            [user.email],
+            fail_silently=False,
+        )
+
+    return Response({
+        'message': 'If an active account uses that email, a password reset link has been sent.',
+    })
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+@throttle_classes([PasswordResetThrottle])
+def confirm_password_reset(request):
+    uid = request.data.get('uid', '')
+    token = request.data.get('token', '')
+    try:
+        user_id = force_str(urlsafe_base64_decode(uid))
+        user = User.objects.get(pk=user_id, is_active=True, is_active_user=True)
+    except (TypeError, ValueError, OverflowError, UnicodeDecodeError, User.DoesNotExist):
+        return Response({'error': 'This reset link is invalid or has expired.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if not default_token_generator.check_token(user, token):
+        return Response({'error': 'This reset link is invalid or has expired.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    serializer = PasswordResetConfirmSerializer(
+        data=request.data,
+        context={'reset_user': user},
+    )
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    user.set_password(serializer.validated_data['new_password'])
+    user.save(update_fields=['password'])
+    return Response({'message': 'Your password has been updated. Sign in with your new password.'})
+
+
+@api_view(['POST'])
+@permission_classes([SmartNestAuthenticated])
+def change_password(request):
+    serializer = PasswordChangeSerializer(
+        data=request.data,
+        context={'request': request},
+    )
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    request.user.set_password(serializer.validated_data['new_password'])
+    request.user.save(update_fields=['password'])
+    return Response({'message': 'Your password has been updated. Sign in again with your new password.'})
+
+
 @api_view(['GET', 'PATCH'])
 @permission_classes([SmartNestAuthenticated])
 def user_access_list(request, pk=None):
@@ -252,6 +368,10 @@ def user_assignment_options(request):
         return forbidden()
     units = Unit.objects.select_related('property').order_by('property__name', 'unit_number')
     return Response({
+        'properties': [
+            {'id': prop.id, 'name': prop.name, 'owner_id': prop.owner_id}
+            for prop in Property.objects.order_by('name')
+        ],
         'units': [
             {
                 'id': unit.id,
@@ -269,7 +389,7 @@ def user_assignment_options(request):
 def team_onboarding(request):
     if request.user.role != 'manager':
         return forbidden()
-    serializer = TeamMemberOnboardingSerializer(data=request.data)
+    serializer = TeamMemberOnboardingSerializer(data=request.data, context={'request': request})
     if not serializer.is_valid():
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     user = serializer.save()
@@ -351,15 +471,18 @@ def dashboard_stats(request):
     if user.role not in ('manager', 'staff'):
         return forbidden()
 
-    properties = apply_staff_cluster(Property.objects.all(), user, 'cluster')
-    tenants = apply_staff_cluster(Tenant.objects.all(), user, 'property__cluster')
-    units = apply_staff_cluster(Unit.objects.all(), user, 'property__cluster')
-    payments = apply_staff_cluster(Payment.objects.all(), user, 'tenant__property__cluster')
+    properties = apply_staff_cluster(manager_scope(Property.objects.all(), user), user, 'cluster')
+    tenants = apply_staff_cluster(manager_scope(Tenant.objects.all(), user), user, 'property__cluster')
+    units = apply_staff_cluster(manager_scope(Unit.objects.all(), user), user, 'property__cluster')
+    payments = apply_staff_cluster(manager_scope(Payment.objects.all(), user), user, 'tenant__property__cluster')
+    expenses = manager_scope(Expense.objects.all(), user)
     total_properties = properties.count()
     total_tenants = tenants.count()
     total_income = 0
+    total_expenses = 0
     if user.role == 'manager':
         total_income = payments.aggregate(total=Sum('amount'))['total'] or 0
+        total_expenses = expenses.aggregate(total=Sum('amount'))['total'] or 0
     occupied_units = units.filter(status='occupied').count()
     vacant_units = units.filter(status='vacant').count()
     active_leases = tenants.filter(status='active').count()
@@ -368,7 +491,7 @@ def dashboard_stats(request):
         'total_properties': total_properties,
         'total_tenants': total_tenants,
         'rental_income': f'KSh {total_income:,.0f}' if user.role == 'manager' else '',
-        'expenses': 'KSh 165,400' if user.role == 'manager' else '',
+        'expenses': f'KSh {total_expenses:,.0f}' if user.role == 'manager' else '',
         'occupied_units': occupied_units,
         'vacant_units': vacant_units,
         'active_leases': active_leases,
@@ -385,7 +508,7 @@ def properties_list(request):
             return forbidden()
         if request.user.role not in ('manager', 'staff', 'tenant'):
             return forbidden()
-        properties = Property.objects.all()
+        properties = manager_scope(Property.objects.all(), request.user)
         if request.user.role == 'tenant':
             tenant = tenant_record(request.user)
             properties = properties.filter(pk=tenant.property_id) if tenant else properties.none()
@@ -402,7 +525,7 @@ def properties_list(request):
         return forbidden()
     serializer = PropertySerializer(data=request.data)
     if serializer.is_valid():
-        serializer.save()
+        serializer.save(owner=request.user)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -413,7 +536,7 @@ def property_detail(request, pk):
     if request.user.role == 'admin' or request.user.role not in ('manager', 'staff', 'tenant'):
         return forbidden()
     try:
-        properties = Property.objects.all()
+        properties = manager_scope(Property.objects.all(), request.user)
         if request.user.role == 'tenant':
             tenant = tenant_record(request.user)
             properties = properties.filter(pk=tenant.property_id) if tenant else properties.none()
@@ -454,7 +577,7 @@ def units_list(request):
             return forbidden()
         if request.user.role not in ('manager', 'staff', 'tenant'):
             return forbidden()
-        units = Unit.objects.all()
+        units = manager_scope(Unit.objects.all(), request.user)
         if request.user.role == 'tenant':
             tenant = tenant_record(request.user)
             units = units.filter(pk=tenant.unit_id) if tenant and tenant.unit_id else units.none()
@@ -465,6 +588,11 @@ def units_list(request):
         return forbidden()
     serializer = UnitSerializer(data=request.data)
     if serializer.is_valid():
+        if (
+            request.user.role == 'manager'
+            and serializer.validated_data['property'].owner_id != request.user.id
+        ):
+            return forbidden()
         serializer.save()
         return Response(serializer.data, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -479,7 +607,7 @@ def tenants_list(request):
             return forbidden()
         if request.user.role not in ('manager', 'staff', 'tenant'):
             return Response([]) if request.user.role == 'maintenance' else forbidden()
-        tenants = Tenant.objects.all()
+        tenants = manager_scope(Tenant.objects.all(), request.user)
         if request.user.role == 'tenant':
             tenants = tenants.filter(user=request.user)
         tenants = apply_staff_cluster(tenants, request.user, 'property__cluster')
@@ -487,8 +615,10 @@ def tenants_list(request):
         return Response(serializer.data)
     if not has_role(request.user, 'manager'):
         return forbidden()
-    serializer = TenantSerializer(data=request.data)
+    serializer = TenantSerializer(data=request.data, context={'request': request})
     if serializer.is_valid():
+        if serializer.validated_data['property'].owner_id != request.user.id:
+            return forbidden()
         serializer.save()
         return Response(serializer.data, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -501,7 +631,7 @@ def payments_list(request):
     if request.method == 'GET':
         if request.user.role == 'admin' or request.user.role not in ('manager', 'tenant'):
             return forbidden()
-        payments = Payment.objects.all()
+        payments = manager_scope(Payment.objects.all(), request.user)
         if request.user.role == 'tenant':
             payments = payments.filter(tenant__user=request.user)
         serializer = PaymentSerializer(payments, many=True)
@@ -510,6 +640,8 @@ def payments_list(request):
         return forbidden()
     serializer = PaymentSerializer(data=request.data)
     if serializer.is_valid():
+        if serializer.validated_data['tenant'].property.owner_id != request.user.id:
+            return forbidden()
         serializer.save()
         return Response(serializer.data, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -551,6 +683,7 @@ def maintenance_list(request):
             jobs = jobs.filter(reported_by_user=request.user)
         elif request.user.role == 'maintenance':
             jobs = jobs.filter(assignee__in=[request.user.username, request.user.email])
+        jobs = manager_scope(jobs, request.user)
         jobs = apply_staff_cluster(jobs, request.user, 'property__cluster')
         serializer = MaintenanceJobSerializer(jobs, many=True)
         return Response(serializer.data)
@@ -578,6 +711,11 @@ def maintenance_list(request):
         return forbidden()
     serializer = MaintenanceJobSerializer(data=request.data)
     if serializer.is_valid():
+        if (
+            request.user.role == 'manager'
+            and serializer.validated_data['property'].owner_id != request.user.id
+        ):
+            return forbidden()
         if request.user.role == 'staff':
             unit = serializer.validated_data.get('unit')
             if not unit or not request.user.assigned_units.filter(pk=unit.pk).exists():
@@ -593,7 +731,9 @@ def maintenance_detail(request, pk):
     if request.user.role not in ('manager', 'staff', 'maintenance', 'tenant'):
         return forbidden()
     jobs = MaintenanceJob.objects.all()
-    if request.user.role == 'staff':
+    if request.user.role == 'manager':
+        jobs = manager_scope(jobs, request.user)
+    elif request.user.role == 'staff':
         jobs = jobs.filter(unit__in=request.user.assigned_units.all())
     elif request.user.role == 'maintenance':
         jobs = jobs.filter(assignee__in=[request.user.username, request.user.email])
@@ -613,6 +753,11 @@ def maintenance_detail(request, pk):
     else:
         return forbidden()
     if serializer.is_valid():
+        if (
+            request.user.role == 'manager'
+            and serializer.validated_data.get('property', job.property).owner_id != request.user.id
+        ):
+            return forbidden()
         serializer.save()
         return Response(MaintenanceJobSerializer(job).data)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -624,7 +769,10 @@ def tenancy_events(request):
     if request.user.role not in ('manager', 'staff'):
         return forbidden()
     if request.method == 'GET':
-        events = TenancyEvent.objects.select_related('tenant', 'unit', 'unit__property', 'recorded_by')
+        events = manager_scope(
+            TenancyEvent.objects.select_related('tenant', 'unit', 'unit__property', 'recorded_by'),
+            request.user,
+        )
         if request.user.role == 'staff':
             events = events.filter(unit__in=request.user.assigned_units.all())
         return Response(TenancyEventSerializer(events, many=True).data)
@@ -634,6 +782,8 @@ def tenancy_events(request):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     tenant = serializer.validated_data['tenant']
     unit = serializer.validated_data['unit']
+    if unit.property.owner_id != request.user.id and request.user.role == 'manager':
+        return forbidden()
     if request.user.role == 'staff' and not request.user.assigned_units.filter(pk=unit.pk).exists():
         return forbidden()
 
@@ -647,13 +797,16 @@ def tenancy_events(request):
             return Response({'action': ['Only a pending tenancy in a vacant unit can be checked in.']}, status=status.HTTP_400_BAD_REQUEST)
         if action == 'check_out' and (unit.status != 'occupied' or tenant.status not in ('active', 'expiring')):
             return Response({'action': ['Only an active or expiring tenancy in an occupied unit can be checked out.']}, status=status.HTTP_400_BAD_REQUEST)
-        event = TenancyEvent.objects.create(
-            tenant=tenant,
-            unit=unit,
-            action=action,
-            recorded_by=request.user,
-            notes=serializer.validated_data.get('notes', ''),
-        )
+        event_data = {
+            'tenant': tenant,
+            'unit': unit,
+            'action': action,
+            'recorded_by': request.user,
+            'notes': serializer.validated_data.get('notes', ''),
+        }
+        if 'evidence_upload' in serializer.validated_data:
+            event_data['evidence_photo'] = serializer.validated_data['evidence_upload']
+        event = TenancyEvent.objects.create(**event_data)
         if action == 'check_in':
             unit.status = 'occupied'
             unit.tenant = tenant.name
@@ -677,12 +830,33 @@ def tenancy_events(request):
     return Response(TenancyEventSerializer(event).data, status=status.HTTP_201_CREATED)
 
 
+@api_view(['GET'])
+@permission_classes([SmartNestAuthenticated])
+def tenancy_event_photo(request, pk):
+    if request.user.role not in ('manager', 'staff'):
+        return forbidden()
+    events = manager_scope(TenancyEvent.objects.all(), request.user)
+    if request.user.role == 'staff':
+        events = events.filter(unit__in=request.user.assigned_units.all())
+    try:
+        event = events.get(pk=pk)
+    except TenancyEvent.DoesNotExist:
+        return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+    if not event.evidence_photo:
+        return Response({'error': 'No photo is attached to this event.'}, status=status.HTTP_404_NOT_FOUND)
+    content_type = mimetypes.guess_type(event.evidence_photo.name)[0] or 'application/octet-stream'
+    response = FileResponse(event.evidence_photo.open('rb'), content_type=content_type)
+    response['Cache-Control'] = 'private, no-store'
+    response['X-Content-Type-Options'] = 'nosniff'
+    return response
+
+
 # Staff
 @api_view(['GET', 'POST'])
 @permission_classes([SmartNestAuthenticated])
 def staff_list(request):
     if request.method == 'GET':
-        if not has_role(request.user, 'manager'):
+        if not has_role(request.user, 'admin'):
             return forbidden()
         staff = Staff.objects.all()
         serializer = StaffSerializer(staff, many=True)
@@ -709,13 +883,18 @@ def expenses_list(request):
     if request.method == 'GET':
         if request.user.role != 'manager':
             return forbidden()
-        expenses = Expense.objects.all()
+        expenses = manager_scope(Expense.objects.all(), request.user)
         serializer = ExpenseSerializer(expenses, many=True)
         return Response(serializer.data)
     if not has_role(request.user, 'manager'):
         return forbidden()
     serializer = ExpenseSerializer(data=request.data)
     if serializer.is_valid():
+        property_record = serializer.validated_data.get('property')
+        if not property_record:
+            return Response({'property': ['Select one of your managed properties.']}, status=status.HTTP_400_BAD_REQUEST)
+        if property_record.owner_id != request.user.id:
+            return forbidden()
         serializer.save()
         return Response(serializer.data, status=status.HTTP_201_CREATED)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -727,7 +906,7 @@ def expense_detail(request, pk):
     if request.user.role != 'manager':
         return forbidden()
     try:
-        expenses = Expense.objects.all()
+        expenses = manager_scope(Expense.objects.all(), request.user)
         expense = expenses.get(pk=pk)
     except Expense.DoesNotExist:
         return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
@@ -739,6 +918,9 @@ def expense_detail(request, pk):
             return forbidden()
         serializer = ExpenseSerializer(expense, data=request.data)
         if serializer.is_valid():
+            property_record = serializer.validated_data.get('property', expense.property)
+            if property_record.owner_id != request.user.id:
+                return forbidden()
             serializer.save()
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -756,7 +938,7 @@ def unit_inspections_list(request):
     if request.method == 'GET':
         if request.user.role not in ('manager', 'staff'):
             return forbidden()
-        inspections = UnitInspection.objects.all()
+        inspections = manager_scope(UnitInspection.objects.all(), request.user)
         inspections = apply_staff_cluster(inspections, request.user, 'unit__property__cluster')
         serializer = UnitInspectionSerializer(inspections, many=True)
         return Response(serializer.data)
@@ -764,6 +946,11 @@ def unit_inspections_list(request):
         return forbidden()
     serializer = UnitInspectionSerializer(data=request.data)
     if serializer.is_valid():
+        if (
+            request.user.role == 'manager'
+            and serializer.validated_data['unit'].property.owner_id != request.user.id
+        ):
+            return forbidden()
         if request.user.role == 'staff':
             if not request.user.assigned_units.filter(pk=serializer.validated_data['unit'].id).exists():
                 return forbidden()
@@ -778,7 +965,7 @@ def unit_inspection_detail(request, pk):
     if request.user.role not in ('manager', 'staff'):
         return forbidden()
     try:
-        inspections = UnitInspection.objects.all()
+        inspections = manager_scope(UnitInspection.objects.all(), request.user)
         inspections = apply_staff_cluster(inspections, request.user, 'unit__property__cluster')
         inspection = inspections.get(pk=pk)
     except UnitInspection.DoesNotExist:
@@ -791,6 +978,11 @@ def unit_inspection_detail(request, pk):
             return forbidden()
         serializer = UnitInspectionSerializer(inspection, data=request.data)
         if serializer.is_valid():
+            if (
+                request.user.role == 'manager'
+                and serializer.validated_data.get('unit', inspection.unit).property.owner_id != request.user.id
+            ):
+                return forbidden()
             if request.user.role == 'staff':
                 unit = serializer.validated_data['unit']
                 if not request.user.assigned_units.filter(pk=unit.id).exists():

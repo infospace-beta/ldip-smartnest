@@ -9,6 +9,9 @@ urlpatterns = [
     path('tenant-invitations/<str:token>/', views.tenant_invitation_details, name='tenant_invitation_details'),
     path('auth/login/', views.login, name='login'),
     path('auth/me/', views.me, name='me'),
+    path('auth/password/change/', views.change_password, name='change_password'),
+    path('auth/password/reset/', views.request_password_reset, name='request_password_reset'),
+    path('auth/password/reset/confirm/', views.confirm_password_reset, name='confirm_password_reset'),
     path('users/', views.user_access_list, name='user_access_list'),
     path('users/assignment-options/', views.user_assignment_options, name='user_assignment_options'),
     path('users/<int:pk>/', views.user_access_list, name='user_access_detail'),
@@ -42,6 +45,7 @@ urlpatterns = [
     path('maintenance/', views.maintenance_list, name='maintenance_list'),
     path('maintenance/<int:pk>/', views.maintenance_detail, name='maintenance_detail'),
     path('tenancy-events/', views.tenancy_events, name='tenancy_events'),
+    path('tenancy-events/<int:pk>/photo/', views.tenancy_event_photo, name='tenancy_event_photo'),
 
     # Staff
     path('staff/', views.staff_list, name='staff_list'),

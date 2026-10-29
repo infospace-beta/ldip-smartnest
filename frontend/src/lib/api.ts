@@ -108,9 +108,11 @@ export interface UserAccess {
   is_active_user: boolean;
   portal_access_granted: boolean;
   assigned_units: number[];
+  managed_property_ids: number[];
 }
 
 export interface UserAssignmentOptions {
+  properties: { id: number; name: string; owner_id: number | null }[];
   units: { id: number; unit_number: string; property_id: number; property_name: string }[];
 }
 
@@ -120,6 +122,7 @@ export interface OnboardTeamMember {
   password: string;
   phone: string;
   role: "staff" | "maintenance";
+  assigned_units: number[];
 }
 
 export interface TenantInvitationDetails {
@@ -169,6 +172,7 @@ export interface TenancyEvent {
   recorded_by_name: string;
   recorded_at: string;
   notes: string;
+  evidence_photo: boolean;
 }
 
 export interface Property {
@@ -276,6 +280,12 @@ export const authAPI = {
   register: (data: RegisterData) => api.post<RegisterResponse>("/auth/register/", data),
   me: () => api.get<User>("/auth/me/"),
   updateProfile: (data: Pick<User, "username" | "phone">) => api.patch<User>("/auth/me/", data),
+  changePassword: (data: { current_password: string; new_password: string; confirm_password: string }) =>
+    api.post<{ message: string }>("/auth/password/change/", data),
+  requestPasswordReset: (email: string) =>
+    api.post<{ message: string }>("/auth/password/reset/", { email }),
+  confirmPasswordReset: (data: { uid: string; token: string; new_password: string; confirm_password: string }) =>
+    api.post<{ message: string }>("/auth/password/reset/confirm/", data),
 };
 
 export const dashboardAPI = {
@@ -330,7 +340,7 @@ export const staffAPI = {
 export const usersAPI = {
   list: () => api.get<UserAccess[]>("/users/"),
   assignmentOptions: () => api.get<UserAssignmentOptions>("/users/assignment-options/"),
-  update: (id: number, data: Partial<Pick<UserAccess, "role" | "property_cluster" | "is_active_user" | "assigned_units">>) =>
+  update: (id: number, data: Partial<Pick<UserAccess, "role" | "property_cluster" | "is_active_user" | "assigned_units" | "managed_property_ids">> & { managed_properties?: number[] }) =>
     api.patch<UserAccess>(`/users/${id}/`, data),
 };
 
@@ -351,8 +361,16 @@ export const communicationAPI = {
 
 export const tenancyEventsAPI = {
   list: () => api.get<TenancyEvent[]>("/tenancy-events/"),
-  create: (data: Pick<TenancyEvent, "tenant" | "unit" | "action"> & { notes?: string }) =>
-    api.post<TenancyEvent>("/tenancy-events/", data),
+  create: (data: Pick<TenancyEvent, "tenant" | "unit" | "action"> & { notes?: string; evidence_upload?: File }) => {
+    const form = new FormData();
+    form.append("tenant", String(data.tenant));
+    form.append("unit", String(data.unit));
+    form.append("action", data.action);
+    if (data.notes) form.append("notes", data.notes);
+    if (data.evidence_upload) form.append("evidence_upload", data.evidence_upload);
+    return api.post<TenancyEvent>("/tenancy-events/", form);
+  },
+  photo: (id: number) => api.get<Blob>(`/tenancy-events/${id}/photo/`, { responseType: "blob" }),
 };
 
 export interface Expense {
