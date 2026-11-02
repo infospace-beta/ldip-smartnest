@@ -4,6 +4,7 @@ import { createContext, useContext, useState, useEffect, useCallback, type React
 import { useRouter } from "next/navigation";
 import { authAPI, type User, type LoginCredentials, type RegisterData } from "@/lib/api";
 import { createClient } from "@/lib/supabase/client";
+import { authErrorMessage } from "@/lib/supabase/auth-errors";
 
 interface AuthContextType {
   user: User | null;
@@ -52,8 +53,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(async (credentials: LoginCredentials) => {
     const supabase = createClient();
-    const { data, error } = await supabase.auth.signInWithPassword(credentials);
-    if (error) throw error;
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: credentials.email.trim(),
+      password: credentials.password,
+    });
+    if (error) throw new Error(authErrorMessage(error));
     try {
       const profile = await authAPI.me();
       setToken(data.session.access_token);
@@ -67,13 +71,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const register = useCallback(async (data: RegisterData) => {
     if (!data.consent) throw new Error("Consent is required to create an account.");
     const { error } = await createClient().auth.signUp({
-      email: data.email, password: data.password,
+      email: data.email.trim(), password: data.password,
       options: {
         emailRedirectTo: `${window.location.origin}/auth/callback`,
         data: { username: data.username, phone: data.phone, consent: true, invitation_token: data.invitation_token },
       },
     });
-    if (error) throw error;
+    if (error) throw new Error(authErrorMessage(error));
   }, []);
 
   const refreshProfile = useCallback(async () => {

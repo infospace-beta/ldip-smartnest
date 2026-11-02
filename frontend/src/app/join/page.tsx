@@ -76,8 +76,8 @@ export default function JoinTenantPage() {
       } catch {
         setError("Check your email to confirm your account, then sign in to accept the invitation. The invitation must still be valid when you sign in.");
       }
-    } catch {
-      setError("We couldn’t accept this invitation. Confirm the email and try again, or ask your manager for a new link.");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "We couldn’t accept this invitation. Confirm the email and try again, or ask your manager for a new link.");
     } finally {
       setSubmitting(false);
     }

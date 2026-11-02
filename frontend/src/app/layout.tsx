@@ -12,7 +12,9 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body>
+      {/* Browser extensions may add attributes to body before React hydrates.
+          Keep suppression here so mismatches inside the app are still reported. */}
+      <body suppressHydrationWarning>
         <AuthProvider>{children}</AuthProvider>
       </body>
     </html>
