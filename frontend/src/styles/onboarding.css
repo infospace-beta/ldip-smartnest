@@ -1,0 +1,15 @@
+/* Property → house → tenant check-in → invitation. */
+.property-flow-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); gap: 14px; margin: 18px 0; }
+.property-flow-card, .unit-flow-card { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 20px; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); color: var(--ink); text-align: left; }
+.property-flow-card strong, .unit-flow-card strong { font-size: 18px; }
+.property-flow-card span, .property-flow-card small, .unit-flow-card small { color: var(--muted); }
+.property-flow-card.selected, .unit-flow-card.vacant:hover { border-color: var(--green); box-shadow: inset 0 0 0 1px var(--green); }
+.unit-flow-card:disabled { cursor: default; }
+.unit-flow-card.occupied { background: var(--surface-muted); }
+.onboarding-steps { display: flex; flex-wrap: wrap; gap: 12px; padding: 0; margin: 20px 0; list-style: none; color: var(--muted); }
+.onboarding-steps li { padding: 8px 12px; border-radius: 999px; background: var(--surface-muted); }
+.onboarding-steps li[aria-current="step"] { color: var(--green); background: var(--green-soft); font-weight: 700; }
+.invitation-composer { display: grid; gap: 14px; margin-top: 16px; }
+.invitation-modes { display: flex; flex-wrap: wrap; gap: 10px; }
+.invitation-modes button:disabled { cursor: default; }
+.page-heading { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 16px; margin-bottom: 20px; }

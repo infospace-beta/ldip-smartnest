@@ -68,6 +68,7 @@ export interface RegisterData {
   phone: string;
   consent: boolean;
   invitation_token?: string;
+  account_invitation_token?: string;
 }
 
 export interface AuthResponse {
@@ -286,13 +287,13 @@ export interface DashboardStats {
 
 export const authAPI = {
   me: () => api.get<User>("/auth/me/"),
-  updateProfile: (data: Pick<User, "username" | "phone"> & { avatar_image?: File }) => {
+  updateProfile: (data: Partial<Pick<User, "username" | "phone">> & { avatar_image?: File; remove_avatar?: boolean }) => {
     if (!data.avatar_image) {
-      return api.patch<User>("/auth/me/", { username: data.username, phone: data.phone });
+      return api.patch<User>("/auth/me/", data);
     }
     const form = new FormData();
-    form.append("username", data.username);
-    form.append("phone", data.phone);
+    if (data.username !== undefined) form.append("username", data.username);
+    if (data.phone !== undefined) form.append("phone", data.phone);
     form.append("avatar_image", data.avatar_image);
     return api.patch<User>("/auth/me/", form, {
       headers: { "Content-Type": "multipart/form-data" },
@@ -344,8 +345,23 @@ export const propertiesAPI = {
 };
 
 export const unitsAPI = {
+  checkIn: (propertyId: number, unitId: number, data: { name: string; phone: string; lease_end: string; rent: string; notes?: string; evidence_upload?: File }) => {
+    const form = new FormData();
+    form.append("name", data.name);
+    form.append("phone", data.phone);
+    form.append("lease_end", data.lease_end);
+    form.append("rent", data.rent);
+    if (data.notes) form.append("notes", data.notes);
+    if (data.evidence_upload) form.append("evidence_upload", data.evidence_upload);
+    return api.post<Tenant>(`/properties/${propertyId}/units/${unitId}/check-in/`, form, { headers: { "Content-Type": "multipart/form-data" } });
+  },
   list: () => api.get<Unit[]>("/units/"),
   create: (data: Partial<Unit>) => api.post<Unit>("/units/", data),
+};
+
+export const accountInvitationsAPI = {
+  create: (data: { name: string; email: string; phone?: string; role: "manager" | "staff" | "maintenance" }) => api.post<TenantInvitation>("/account-invitations/", data),
+  details: (token: string) => api.get<{ email: string; name: string; phone: string; role: string; expires_at: string }>(`/account-invitations/${encodeURIComponent(token)}/`),
 };
 
 export const tenantsAPI = {

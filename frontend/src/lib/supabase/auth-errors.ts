@@ -9,7 +9,10 @@ export function authErrorMessage(error: { code?: string; message: string }): str
       return "Enter a valid email address that you can receive confirmation messages at.";
     case "email_address_not_authorized":
       return "Email delivery is not configured for this recipient. Ask the administrator to configure the email service.";
+    case "signup_service_unavailable":
+      return "Account creation cannot reach the sign-in service. Please try again shortly.";
     case "over_email_send_rate_limit":
+      return "Confirmation emails are temporarily limited. Check your inbox before retrying later. If this continues, contact the administrator.";
     case "over_request_rate_limit":
       return "Too many requests. Wait a few minutes before trying again.";
     case "signup_disabled":

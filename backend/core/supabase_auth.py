@@ -1,5 +1,6 @@
 """Verify Supabase bearer tokens with Auth; keep authorization in Django."""
 import json
+import hashlib
 import secrets
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -11,7 +12,8 @@ from rest_framework.authentication import BaseAuthentication, get_authorization_
 from rest_framework.exceptions import APIException, AuthenticationFailed
 from rest_framework import serializers
 
-from .models import User
+from .models import User, AccountInvitation
+from django.utils import timezone
 from .serializers import UserRegistrationSerializer
 
 
@@ -65,6 +67,10 @@ class SupabaseAuthentication(BaseAuthentication):
         return user, token
 
     def provision(self, subject, email, metadata):
+        # Roles come only from a server-issued invitation, never user metadata.
+        invitation_code = metadata.get('account_invitation_token')
+        if invitation_code:
+            return self.accept_account_invitation(subject, email, metadata, invitation_code)
         # Never link by email or take roles/access flags from editable user_metadata.
         if User.objects.filter(email__iexact=email).exists():
             raise AuthenticationFailed('Ask an administrator to link your existing SmartNest account to Supabase.')
@@ -97,3 +103,34 @@ class SupabaseAuthentication(BaseAuthentication):
             if user:
                 return user
             raise AuthenticationFailed('Account provisioning failed. Please contact your manager.') from error
+
+
+    def accept_account_invitation(self, subject, email, metadata, token):
+        if not isinstance(token, str) or metadata.get('consent') is not True:
+            raise AuthenticationFailed('A valid invitation and account consent are required.')
+        try:
+            with transaction.atomic():
+                invitation = AccountInvitation.objects.select_for_update().select_related('created_by').filter(
+                    token_digest=hashlib.sha256(token.encode()).hexdigest(),
+                    accepted_at__isnull=True, expires_at__gt=timezone.now(),
+                ).first()
+                if not invitation or not invitation.issuer_valid() or invitation.email.casefold() != email.casefold():
+                    raise AuthenticationFailed('This invitation is invalid, expired, or for a different email.')
+                if User.objects.filter(email__iexact=email).exists():
+                    raise AuthenticationFailed('This email already has an account. Contact your administrator.')
+                user = User.objects.create_user(
+                    email=invitation.email, username=f'{invitation.name[:100]}.{subject.hex[:12]}',
+                    phone=invitation.phone, role=invitation.role, supabase_user_id=subject,
+                    onboarded_by=invitation.created_by if invitation.role != 'manager' else None,
+                    registration_consent_at=timezone.now(),
+                )
+                user.set_unusable_password()
+                user.save(update_fields=['password'])
+                invitation.accepted_at = timezone.now()
+                invitation.save(update_fields=['accepted_at'])
+                return user
+        except IntegrityError as error:
+            user = User.objects.filter(supabase_user_id=subject).first()
+            if user:
+                return user
+            raise AuthenticationFailed('Account registration could not be completed.') from error

@@ -1,5 +1,7 @@
 "use client";
 
+import PasswordInput from "@/components/PasswordInput";
+
 import { Suspense, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -82,7 +84,7 @@ function LoginFormPage() {
     }
 
     try {
-      await register({
+      const result = await register({
         email: String(form.get("email") ?? ""),
         username: fullName.replace(/\s+/g, "."),
         password,
@@ -92,7 +94,9 @@ function LoginFormPage() {
       });
       formElement.reset();
       setCreatingAccount(false);
-      setSuccess("Check your email to confirm your account, then sign in. Your manager must link your tenant record before portal access is granted.");
+      setSuccess(result.requiresEmailConfirmation
+        ? "Check your email to confirm your account, then sign in. Your manager must link your tenant record before portal access is granted."
+        : "Account created. Sign in to check your tenant access. Your manager must link your tenancy before your workspace becomes available.");
     } catch (requestError) {
       setError(messageFrom(requestError, "We couldn’t create your account. Please try again."));
     } finally {
@@ -155,12 +159,12 @@ function LoginFormPage() {
             </div>
             <div className="field">
               <label htmlFor="account-password">Password</label>
-              <input className="auth-input" id="account-password" name={creatingAccount ? "new_password1" : "password"} type="password" autoComplete={creatingAccount ? "new-password" : "current-password"} minLength={creatingAccount ? 8 : 1} required placeholder={creatingAccount ? "Create a strong password" : "Enter your password"} />
+              <PasswordInput className="auth-input" id="account-password" name={creatingAccount ? "new_password1" : "password"} autoComplete={creatingAccount ? "new-password" : "current-password"} minLength={creatingAccount ? 8 : 1} required placeholder={creatingAccount ? "Create a strong password" : "Enter your password"} />
             </div>
             {creatingAccount && (
               <div className="field">
                 <label htmlFor="account-confirm-password">Confirm password</label>
-                <input className="auth-input" id="account-confirm-password" name="new_password2" type="password" autoComplete="new-password" minLength={8} required placeholder="Repeat your password" />
+                <PasswordInput className="auth-input" id="account-confirm-password" name="new_password2" autoComplete="new-password" minLength={8} required placeholder="Repeat your password" />
               </div>
             )}
             {creatingAccount && (

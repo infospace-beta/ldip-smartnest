@@ -1,5 +1,7 @@
 "use client";
 
+import PasswordInput from "@/components/PasswordInput";
+
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
@@ -17,6 +19,7 @@ export default function JoinTenantPage() {
   const [loadingInvite, setLoadingInvite] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [confirmationSent, setConfirmationSent] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -61,7 +64,7 @@ export default function JoinTenantPage() {
     setSubmitting(true);
     setError("");
     try {
-      await register({
+      const result = await register({
         email,
         username: fullName.replace(/\s+/g, "."),
         password,
@@ -70,6 +73,10 @@ export default function JoinTenantPage() {
         consent: form.get("consent") === "on",
         invitation_token: token,
       });
+      if (result.requiresEmailConfirmation) {
+        setConfirmationSent(true);
+        return;
+      }
       try {
         await login({ email, password });
         router.replace("/dashboard");
@@ -101,7 +108,7 @@ export default function JoinTenantPage() {
         <section className="auth-content" aria-live="polite">
           <div className="page-eyebrow"><Icon name="home" />Tenant invitation</div>
           <h2>Join SmartNest</h2>
-          {loadingInvite ? <div className="loading-state" role="status">Checking your invitation…</div> : error && !email ? (
+          {confirmationSent ? <div className="auth-message success" role="status">Check your email and confirm your account in this browser, then <Link href="/login">sign in</Link>. The invitation must still be valid when you sign in.</div> : loadingInvite ? <div className="loading-state" role="status">Checking your invitation…</div> : error && !email ? (
             <div className="auth-message" role="alert">{error}<p><Link href="/login">Go to sign in</Link></p></div>
           ) : (
             <>
@@ -122,11 +129,11 @@ export default function JoinTenantPage() {
                 </div>
                 <div className="field">
                   <label htmlFor="invite-password">Create password</label>
-                  <input className="auth-input" id="invite-password" name="password" type="password" required minLength={8} autoComplete="new-password" />
+                  <PasswordInput className="auth-input" id="invite-password" name="password" required minLength={8} autoComplete="new-password" />
                 </div>
                 <div className="field">
                   <label htmlFor="invite-password-confirm">Confirm password</label>
-                  <input className="auth-input" id="invite-password-confirm" name="confirmPassword" type="password" required minLength={8} autoComplete="new-password" />
+                  <PasswordInput className="auth-input" id="invite-password-confirm" name="confirmPassword" required minLength={8} autoComplete="new-password" />
                 </div>
                 <label className="consent-row">
                   <input name="consent" type="checkbox" required />

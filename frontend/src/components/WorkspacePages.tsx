@@ -1,9 +1,14 @@
 "use client";
 
+import PasswordInput from "@/components/PasswordInput";
+import AccountInvitationForm from "@/components/AccountInvitationForm";
+import InvitationComposer from "@/components/InvitationComposer";
+import ProfilePhotoCropper from "@/components/ProfilePhotoCropper";
+
 import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import {
   authAPI,
   communicationAPI,
@@ -309,7 +314,7 @@ const PAGE_CONFIGS: Record<string, PageConfig> = {
       const [properties, units] = await Promise.all([propertiesAPI.list(), unitsAPI.list()]);
       return { rows: rowsOf(properties.data), references: { properties: rowsOf(properties.data), units: rowsOf(units.data) } };
     },
-    forms: [propertyForm, unitForm],
+    forms: [propertyForm],
     filters: ["all", "leased", "vacant"],
   },
   tenants: {
@@ -319,7 +324,7 @@ const PAGE_CONFIGS: Record<string, PageConfig> = {
       const [tenants, properties, units] = await Promise.all([tenantsAPI.list(), propertiesAPI.list(), unitsAPI.list()]);
       return { rows: rowsOf(tenants.data), references: { tenants: rowsOf(tenants.data), properties: rowsOf(properties.data), units: rowsOf(units.data) } };
     },
-    forms: [tenantForm],
+    forms: [],
     filters: ["all", "active", "expiring", "pending"],
   },
   reconciliation: {
@@ -1095,12 +1100,6 @@ export function RecordsPage({ page }: { page: string }) {
   const [filter, setFilter] = useState("all");
   const [selectedTenant, setSelectedTenant] = useState<DataRow | null>(null);
   const [selectedProfile, setSelectedProfile] = useState<{ userId: number; name: string; hasAvatar?: boolean } | null>(null);
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteUrl, setInviteUrl] = useState("");
-  const [inviteError, setInviteError] = useState("");
-  const [inviteSaving, setInviteSaving] = useState(false);
-  const [inviteCopied, setInviteCopied] = useState(false);
-
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -1135,30 +1134,10 @@ export function RecordsPage({ page }: { page: string }) {
   const actions = config.forms?.filter((form) => user && form.allowedRoles.includes(user.role)).map((form) => (
     <RecordForm form={form} references={references} onSaved={load} key={form.title} />
   ));
-  const createInviteLink = async () => {
-    if (typeof selectedTenant?.id !== "number" || !inviteEmail.trim()) {
-      setInviteError("Enter the tenant’s email address to create an invitation link.");
-      return;
-    }
-    setInviteSaving(true);
-    setInviteError("");
-    setInviteUrl("");
-    setInviteCopied(false);
-    try {
-      const { data } = await tenantsAPI.invite(selectedTenant.id, inviteEmail.trim());
-      const url = new URL("/join", window.location.origin);
-      url.searchParams.set("token", data.token);
-      setInviteUrl(url.toString());
-    } catch (requestError) {
-      setInviteError(getApiErrorMessage(requestError, "Could not create an invitation link."));
-    } finally {
-      setInviteSaving(false);
-    }
-  };
 
   return (
     <section>
-      <PageHeader title={config.title} eyebrow={config.eyebrow} description={config.description} icon={config.icon} actions={actions} />
+      <PageHeader title={config.title} eyebrow={config.eyebrow} description={config.description} icon={config.icon} actions={page === "tenants" && user?.role === "manager" ? <Link className="button button-primary" href="/dashboard/properties">Add tenant through a vacant house</Link> : actions} />
       {config.filters && (
         <div className="filter-tabs" role="group" aria-label="Filter records">
           {config.filters.map((item) => (
@@ -1198,10 +1177,6 @@ export function RecordsPage({ page }: { page: string }) {
                           />
                           <button className="table-primary tenant-profile-trigger" type="button" onClick={() => {
                             setSelectedTenant(row);
-                            setInviteEmail(String(row.invitation_email ?? ""));
-                            setInviteUrl("");
-                            setInviteError("");
-                            setInviteCopied(false);
                           }}>{formatted}</button>
                         </span>
                       ) : page === "maintenance" && column.key === "reported_by" && typeof row.reported_by_user_id === "number" ? (
@@ -1266,25 +1241,12 @@ export function RecordsPage({ page }: { page: string }) {
             {!selectedTenant.account_linked && user && ["manager", "staff"].includes(user.role) && (
               <div className="tenant-invitation-panel">
                 <h3>Share an account invitation</h3>
-                <p className="panel-description">Create a secure, one-time link you can send to the tenant. It expires in 7 days.</p>
-                {Boolean(selectedTenant.invitation_email) && <div className="hint-card">
-                  <strong>{selectedTenant.invitation_expires_at ? "Invitation link ready to resend" : "Previous invitation expired"}</strong>
-                  <span>{selectedTenant.invitation_expires_at
-                    ? `A link was prepared for ${String(selectedTenant.invitation_email)} until ${new Date(String(selectedTenant.invitation_expires_at)).toLocaleString()}. Create a new link to replace it, or copy the email below and generate a fresh one.`
-                    : `The last invitation for ${String(selectedTenant.invitation_email)} has expired. Create a fresh link to send again.`}</span>
-                </div>}
-                <label className="field"><span>Tenant email</span><input type="email" autoComplete="email" value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} placeholder="tenant@example.com" /></label>
-                {inviteError && <div className="form-error" role="alert">{inviteError}</div>}
-                <button className="button button-secondary" type="button" onClick={() => void createInviteLink()} disabled={inviteSaving}>{inviteSaving ? "Creating link…" : selectedTenant.invitation_expires_at ? "Create a new invitation link" : "Create invitation link"}</button>
-                {inviteUrl && <div className="hint-card invite-link-card" role="status">
-                  <strong>Invitation link ready</strong>
-                  <div className="invite-link-controls">
-                    <input aria-label="Tenant invitation link" readOnly value={inviteUrl} onFocus={(event) => event.currentTarget.select()} />
-                    <button className="button button-secondary button-compact" type="button" onClick={() => {
-                      void navigator.clipboard.writeText(inviteUrl).then(() => setInviteCopied(true)).catch(() => setInviteCopied(false));
-                    }}>{inviteCopied ? "Copied" : "Copy link"}</button>
-                  </div>
-                </div>}
+                {selectedTenant.can_invite ? <InvitationComposer key={String(selectedTenant.id)} name={String(selectedTenant.name)} defaultEmail={String(selectedTenant.invitation_email ?? "")} prepare={async (email) => {
+                  const { data } = await tenantsAPI.invite(Number(selectedTenant.id), email);
+                  const url = new URL("/join", window.location.origin);
+                  url.searchParams.set("token", data.token);
+                  return url.toString();
+                }} /> : <p className="panel-description">Complete this tenant’s check-in before preparing their registration invitation.</p>}
               </div>
             )}
           </section>
@@ -1421,6 +1383,7 @@ export function UserAccessPage() {
         description="Grant and revoke tenant, staff, maintenance, manager (landlord), and admin access."
         icon="staff"
       />
+      <AccountInvitationForm manager />
       <div className="hint-card"><strong>Provisioning flow</strong>Users create tenant accounts from the sign-in page. A manager links tenant accounts to records; administrators grant staff, maintenance, manager (landlord), and admin roles here.</div>
       <div className="hint-card"><strong>Staff access</strong>Staff inherit the portfolio of the manager who onboarded them. Assigning units here adds a direct override for staff who were created before manager onboarding, while maintenance accounts only need work-order assignments.</div>
       <div className="hint-card"><strong>Property ownership</strong>Assign each managed property to its manager here. Managers only see records connected to their assigned properties; unassigned legacy properties remain visible to administrators until assigned.</div>
@@ -1481,6 +1444,7 @@ export function TeamOnboardingPage() {
       </div>
       {error && <div className="error-state" role="alert">{error}</div>}
       {success && <div className="auth-message success" role="status">{success}</div>}
+      <AccountInvitationForm />
       <section className="panel form-panel">
         <div className="panel-heading"><div><h2 className="panel-title">New team account</h2><p className="panel-description">The manager creates the account and sets its initial password.</p></div></div>
         <form onSubmit={submit}>
@@ -1506,7 +1470,7 @@ export function TeamOnboardingPage() {
               </label>
               <label className="field">
                 <span>Initial password</span>
-                <input name="password" type="password" required minLength={8} autoComplete="new-password" />
+                <PasswordInput name="password" required minLength={8} autoComplete="new-password" />
               </label>
             </div>
             <div className="form-actions"><button className="button button-primary" type="submit" disabled={saving}>{saving ? "Creating account…" : "Create account"}</button></div>
@@ -2139,6 +2103,51 @@ export function ProfilePage() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [avatarError, setAvatarError] = useState("");
+  const [photoSaving, setPhotoSaving] = useState(false);
+  const [photoMenuOpen, setPhotoMenuOpen] = useState(false);
+  const photoInput = useRef<HTMLInputElement>(null);
+  const [cropFile, setCropFile] = useState<File | null>(null);
+
+  const choosePhoto = (file: File) => {
+    setPhotoMenuOpen(false);
+    setAvatarError("");
+    if (file.size > 5 * 1024 * 1024) {
+      setAvatarError("Profile photos must be 5 MB or smaller.");
+      return;
+    }
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      setAvatarError("Choose a JPEG, PNG, or WebP profile photo.");
+      return;
+    }
+    setCropFile(file);
+  };
+
+  const updatePhoto = async (file?: File) => {
+    setPhotoMenuOpen(false);
+    setAvatarError("");
+    setMessage("");
+    if (file && file.size > 5 * 1024 * 1024) {
+      setAvatarError("Profile photos must be 5 MB or smaller.");
+      return false;
+    }
+    if (file && !["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      setAvatarError("Choose a JPEG, PNG, or WebP profile photo.");
+      return false;
+    }
+    setPhotoSaving(true);
+    try {
+      await authAPI.updateProfile(file ? { avatar_image: file } : { remove_avatar: true });
+      await refreshProfile();
+      window.dispatchEvent(new Event("smartnest:avatar-updated"));
+      setMessage(file ? "Your profile photo has been updated." : "Your profile photo has been removed.");
+      return true;
+    } catch {
+      setAvatarError("We couldn’t update your profile photo. Please try again.");
+      return false;
+    } finally {
+      setPhotoSaving(false);
+    }
+  };
   const [passwordSaving, setPasswordSaving] = useState(false);
   const [passwordError, setPasswordError] = useState("");
   const [passwordMessage, setPasswordMessage] = useState("");
@@ -2149,23 +2158,10 @@ export function ProfilePage() {
     setSaving(true);
     setMessage("");
     const form = new FormData(event.currentTarget);
-    const avatarFile = form.get("avatar_image");
-    if (avatarFile instanceof File && avatarFile.size > 5 * 1024 * 1024) {
-      setAvatarError("Profile photos must be 5 MB or smaller.");
-      setSaving(false);
-      return;
-    }
-    if (avatarFile instanceof File && avatarFile.size > 0 && !["image/jpeg", "image/png", "image/webp"].includes(avatarFile.type)) {
-      setAvatarError("Choose a JPEG, PNG, or WebP profile photo.");
-      setSaving(false);
-      return;
-    }
-    setAvatarError("");
     try {
       await authAPI.updateProfile({
         username: String(form.get("username") ?? ""),
         phone: String(form.get("phone") ?? ""),
-        ...(avatarFile instanceof File && avatarFile.size > 0 ? { avatar_image: avatarFile } : {}),
       });
       await refreshProfile();
       window.dispatchEvent(new Event("smartnest:avatar-updated"));
@@ -2217,9 +2213,25 @@ export function ProfilePage() {
 
   return (
     <section>
+      {cropFile && <ProfilePhotoCropper file={cropFile} onCancel={() => setCropFile(null)} onSave={async (file) => {
+        const saved = await updatePhoto(file);
+        if (saved) setCropFile(null);
+        return saved;
+      }} />}
       <PageHeader title="My profile" eyebrow="Account" description="Account details are read from your authenticated SmartNest profile." icon="profile" />
       <div className="panel profile-card">
-        <UserAvatar userId={user?.id} hasAvatar={user?.has_avatar} name={name} className="profile-avatar" />
+        <div className="profile-photo-control">
+          <UserAvatar userId={user?.id} hasAvatar={user?.has_avatar} name={name} className="profile-avatar" />
+          <button className="profile-camera" type="button" aria-label="Edit profile photo" aria-expanded={photoMenuOpen} aria-controls="profile-photo-options" disabled={photoSaving || saving}
+            onClick={() => setPhotoMenuOpen((open) => !open)}><Icon name="camera" /></button>
+          <input ref={photoInput} type="file" hidden accept="image/jpeg,image/png,image/webp" aria-label="Choose profile photo"
+            onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file) choosePhoto(file); }} />
+          {photoMenuOpen && <div className="profile-photo-options" id="profile-photo-options" onKeyDown={(event) => { if (event.key === "Escape") { setPhotoMenuOpen(false); event.currentTarget.parentElement?.querySelector<HTMLButtonElement>(".profile-camera")?.focus(); } }}>
+            <button type="button" onClick={() => photoInput.current?.click()}>{user?.has_avatar ? "Change photo" : "Add photo"}</button>
+            {user?.has_avatar && <button type="button" onClick={() => void updatePhoto()}>Remove photo</button>}
+            <button type="button" onClick={() => setPhotoMenuOpen(false)}>Cancel</button>
+          </div>}
+        </div>
         <div><h2>{name}</h2><p>{user?.email}</p></div>
       </div>
       <section className="panel form-panel">
@@ -2230,11 +2242,10 @@ export function ProfilePage() {
             <div className="field"><label htmlFor="profile-phone">Phone number</label><input id="profile-phone" name="phone" type="tel" maxLength={20} defaultValue={user?.phone ?? ""} /></div>
             <div className="field"><label htmlFor="profile-email">Email address</label><input id="profile-email" value={user?.email ?? ""} readOnly /></div>
             <div className="field"><label htmlFor="profile-role">Role</label><input id="profile-role" value={user?.role ?? ""} readOnly /></div>
-            <div className="field field-full"><label htmlFor="profile-photo">Profile photo</label><input id="profile-photo" name="avatar_image" type="file" accept="image/jpeg,image/png,image/webp" /><small className="field-hint">JPEG, PNG, or WebP; maximum 5 MB.</small></div>
           </div>
           {avatarError && <div className="form-error" role="alert">{avatarError}</div>}
           {message && <div className="form-message" role="status">{message}</div>}
-          <div className="form-actions"><button className="button button-primary" type="submit" disabled={saving}>{saving ? "Saving…" : "Save profile"}</button></div>
+          <div className="form-actions"><button className="button button-primary" type="submit" disabled={saving || photoSaving}>{saving ? "Saving…" : "Save profile"}</button></div>
         </form>
       </section>
       <section className="panel form-panel" id="password">
@@ -2242,9 +2253,9 @@ export function ProfilePage() {
         {passwordError && <div className="auth-message" role="alert">{passwordError}</div>}
         {passwordMessage && <div className="auth-message success" role="status">{passwordMessage}</div>}
         <form className="auth-form password-change-form" onSubmit={changePassword}>
-          <div className="field"><label htmlFor="current-password">Current password</label><input className="auth-input" id="current-password" name="current_password" type="password" autoComplete="current-password" required /></div>
-          <div className="field"><label htmlFor="new-password">New password</label><input className="auth-input" id="new-password" name="new_password1" type="password" autoComplete="new-password" minLength={8} required /></div>
-          <div className="field"><label htmlFor="repeat-new-password">Repeat new password</label><input className="auth-input" id="repeat-new-password" name="new_password2" type="password" autoComplete="new-password" minLength={8} required /></div>
+          <div className="field"><label htmlFor="current-password">Current password</label><PasswordInput className="auth-input" id="current-password" name="current_password" autoComplete="current-password" required /></div>
+          <div className="field"><label htmlFor="new-password">New password</label><PasswordInput className="auth-input" id="new-password" name="new_password1" autoComplete="new-password" minLength={8} required /></div>
+          <div className="field"><label htmlFor="repeat-new-password">Repeat new password</label><PasswordInput className="auth-input" id="repeat-new-password" name="new_password2" autoComplete="new-password" minLength={8} required /></div>
           <div className="form-actions"><button className="button button-primary" type="submit" disabled={passwordSaving}>{passwordSaving ? "Updating…" : "Change password"}</button></div>
         </form>
       </section>

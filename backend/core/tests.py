@@ -9,7 +9,7 @@ from django.test import TestCase, override_settings
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.test import APIClient
 
-from .models import MaintenanceJob, Payment, Property, Tenant, TenantInvitation, Unit, User
+from .models import MaintenanceJob, Payment, Property, Tenant, TenantInvitation, Unit, User, TenancyEvent
 
 
 class TenantAccessTests(TestCase):
@@ -364,6 +364,8 @@ class TenantAccessTests(TestCase):
         client = APIClient()
         client.force_authenticate(user=staff_user)
 
+        TenancyEvent.objects.create(tenant=self.tenant, unit=self.unit, action='check_in', recorded_by=staff_user)
+
         response = client.post(
             f'/api/tenants/{self.tenant.id}/invite/',
             {'email': 'new-jane@example.com'},
@@ -577,6 +579,9 @@ class TenantRegistrationTests(TestCase):
             format='json',
         )
         self.assertEqual(tenant_response.status_code, 201, tenant_response.data)
+
+        checked_in = client.post('/api/tenancy-events/', {'tenant': tenant_response.data['id'], 'unit': unit.id, 'action': 'check_in'}, format='json')
+        self.assertEqual(checked_in.status_code, 201, checked_in.data)
 
         invitation_response = client.post(
             f"/api/tenants/{tenant_response.data['id']}/invite/",
@@ -907,6 +912,11 @@ class RoleAndCommunicationTests(TestCase):
         tenant_record = Tenant.objects.get(user=self.tenant)
         tenant_record.user = None
         tenant_record.save(update_fields=['user'])
+        tenant_record.status = 'active'
+        tenant_record.save(update_fields=['status'])
+        self.unit.status = 'occupied'
+        self.unit.save(update_fields=['status'])
+        TenancyEvent.objects.create(tenant=tenant_record, unit=self.unit, action='check_in', recorded_by=self.manager)
         self.client.force_authenticate(user=self.manager)
         response = self.client.post(
             f'/api/tenants/{tenant_record.id}/invite/',
@@ -924,6 +934,11 @@ class RoleAndCommunicationTests(TestCase):
         tenant_record = Tenant.objects.get(user=self.tenant)
         tenant_record.user = None
         tenant_record.save(update_fields=['user'])
+        tenant_record.status = 'active'
+        tenant_record.save(update_fields=['status'])
+        self.unit.status = 'occupied'
+        self.unit.save(update_fields=['status'])
+        TenancyEvent.objects.create(tenant=tenant_record, unit=self.unit, action='check_in', recorded_by=self.manager)
         staff_user = User.objects.create_user(
             username='invite-staff',
             email='invite-staff@example.com',

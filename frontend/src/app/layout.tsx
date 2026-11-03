@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { AuthProvider } from "@/contexts/AuthContext";
 import "@/styles/smartnest.css";
+import "@/styles/onboarding.css";
 
 export const metadata: Metadata = {
   title: "SmartNest | Property Workspace",

@@ -173,7 +173,7 @@ class MaintenanceAuthorizationTests(TestCase):
 
 class SigningConfigurationTests(SimpleTestCase):
     def test_startup_requires_a_private_key_and_preserves_configured_value(self):
-        script = 'import smartnest_api.settings as s; import os; assert s.SECRET_KEY == os.environ["DJANGO_SECRET_KEY"]'
+        script = 'from unittest.mock import patch; import os\nwith patch("dotenv.load_dotenv"):\n import smartnest_api.settings as s\n assert s.SECRET_KEY == os.environ["DJANGO_SECRET_KEY"]'
         for key in (None, '', ' ' * 60, 'short', 'django-insecure-' + 'x' * 60, 'test-private-key-' + 'x' * 64):
             env = os.environ.copy()
             env.pop('DJANGO_SECRET_KEY', None)

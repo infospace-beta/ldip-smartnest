@@ -1,9 +1,13 @@
 from django.conf import settings
 from django.urls import path
 from . import views
+from . import onboarding_backend
 
 urlpatterns = [
     path('health/', views.health, name='health'),
+    path('account-invitations/', onboarding_backend.account_invitations, name='account_invitations'),
+    path('account-invitations/<str:token>/', onboarding_backend.account_invitation_details, name='account_invitation_details'),
+    path('properties/<int:pk>/units/<int:unit_pk>/check-in/', onboarding_backend.check_in_unit, name='check_in_unit'),
 
     # Auth
     path('auth/register/', views.register, name='register'),

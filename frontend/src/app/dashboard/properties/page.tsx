@@ -1,7 +1,7 @@
 "use client";
 
-import { RecordsPage } from "@/components/WorkspacePages";
+import PropertiesWorkflow from "@/components/PropertiesWorkflow";
 
 export default function PropertiesRoute() {
-  return <RecordsPage page="properties" />;
+  return <PropertiesWorkflow />;
 }

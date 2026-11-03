@@ -1,12 +1,9 @@
 "use client";
 
 import Image from "next/image";
+import Icon from "@/components/Icon";
 import { useEffect, useState } from "react";
 import { usersAPI } from "@/lib/api";
-
-function initials(name: string) {
-  return name.trim().split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase() ?? "").join("") || "S";
-}
 
 export default function UserAvatar({
   userId,
@@ -53,10 +50,10 @@ export default function UserAvatar({
   }, [hasAvatar, userId]);
 
   return (
-    <span className={className} aria-label={`${name} profile photo`}>
+    <span className={`avatar-circle ${className}`} aria-label={`${name} profile photo`}>
       {avatar.userId === userId && hasAvatar && avatar.url
         ? <Image src={avatar.url} alt="" width={96} height={96} unoptimized />
-        : initials(name)}
+        : <Icon name="profile" />}
     </span>
   );
 }

@@ -12,7 +12,7 @@ interface AuthContextType {
   isAuthenticated: boolean;
   isLoading: boolean;
   login: (credentials: LoginCredentials) => Promise<void>;
-  register: (data: RegisterData) => Promise<void>;
+  register: (data: RegisterData) => Promise<{ requiresEmailConfirmation: boolean }>;
   logout: () => Promise<void>;
   refreshProfile: () => Promise<void>;
 }
@@ -34,7 +34,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Run outside the SDK callback, which holds the auth lock.
       window.setTimeout(async () => {
         if (!active || current !== generation) return;
-        setUser(null);
+        setIsLoading(true);
+        if (!session) setUser(null);
         setToken(session?.access_token ?? null);
         try {
           if (session) {
@@ -70,14 +71,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const register = useCallback(async (data: RegisterData) => {
     if (!data.consent) throw new Error("Consent is required to create an account.");
-    const { error } = await createClient().auth.signUp({
+    const { data: signup, error } = await createClient().auth.signUp({
       email: data.email.trim(), password: data.password,
       options: {
         emailRedirectTo: `${window.location.origin}/auth/callback`,
-        data: { username: data.username, phone: data.phone, consent: true, invitation_token: data.invitation_token },
+        data: { username: data.username, phone: data.phone, consent: true, invitation_token: data.invitation_token, account_invitation_token: data.account_invitation_token },
       },
     });
     if (error) throw new Error(authErrorMessage(error));
+    return { requiresEmailConfirmation: !signup.session };
   }, []);
 
   const refreshProfile = useCallback(async () => {

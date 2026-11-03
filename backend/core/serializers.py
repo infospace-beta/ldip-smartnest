@@ -7,6 +7,8 @@ from rest_framework import serializers
 from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
 from django.utils import timezone
+from django.db import transaction
+from .invitation_tokens import invitation_token, tenant_checked_in
 from .models import (
     User, Property, Unit, Tenant, Payment, Notice, MaintenanceJob, Staff, Expense,
     UnitInspection, TenancyEvent, Conversation, Message, TenantInvitation,
@@ -41,12 +43,28 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 class UserProfileSerializer(serializers.ModelSerializer):
+    remove_avatar = serializers.BooleanField(required=False, write_only=True)
     avatar_image = serializers.FileField(required=False, allow_empty_file=False)
 
     class Meta:
         model = User
-        fields = ['email', 'username', 'phone', 'role', 'property_cluster', 'avatar', 'avatar_image']
+        fields = ['email', 'username', 'phone', 'role', 'property_cluster', 'avatar', 'avatar_image', 'remove_avatar']
         read_only_fields = ['email', 'role', 'property_cluster', 'avatar']
+
+    def validate(self, attrs):
+        if attrs.get('remove_avatar') and attrs.get('avatar_image'):
+            raise serializers.ValidationError('Choose a photo or remove it, not both.')
+        return attrs
+
+    def update(self, instance, validated_data):
+        remove_avatar = validated_data.pop('remove_avatar', False)
+        old_photo = instance.avatar_image if remove_avatar else None
+        if remove_avatar:
+            validated_data['avatar_image'] = ''
+        instance = super().update(instance, validated_data)
+        if old_photo:
+            old_photo.delete(save=False)
+        return instance
 
     def validate_avatar_image(self, uploaded_file):
         if uploaded_file.size > 5 * 1024 * 1024:
@@ -101,6 +119,8 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             )
         except TenantInvitation.DoesNotExist as error:
             raise serializers.ValidationError('This tenant invitation is invalid or has expired.') from error
+        if not tenant_checked_in(invitation.tenant):
+            raise serializers.ValidationError('The manager must complete check-in before this invitation can be accepted.')
         if invitation.tenant.user_id:
             raise serializers.ValidationError('This tenant record already has an account.')
         if User.objects.filter(email__iexact=invitation.email).exists():
@@ -280,6 +300,8 @@ class TenantInvitationSerializer(serializers.Serializer):
 
     def validate(self, attrs):
         tenant = self.context['tenant']
+        if not tenant_checked_in(tenant):
+            raise serializers.ValidationError('Complete the tenant check-in before preparing an invitation.')
         if tenant.user_id:
             raise serializers.ValidationError('This tenant already has a linked account.')
         if User.objects.filter(email__iexact=attrs['email']).exists():
@@ -288,14 +310,23 @@ class TenantInvitationSerializer(serializers.Serializer):
 
     def create(self, validated_data):
         tenant = self.context['tenant']
-        token = secrets.token_urlsafe(32)
+        existing = TenantInvitation.objects.filter(tenant=tenant, accepted_at__isnull=True, expires_at__gt=timezone.now()).first()
+        if existing:
+            if existing.email.casefold() != validated_data['email'].casefold():
+                raise serializers.ValidationError({'email': 'An active invitation already exists for a different email.'})
+            token = invitation_token('tenant', tenant.pk, existing.expires_at)
+            if existing.token_digest == hashlib.sha256(token.encode()).hexdigest():
+                self.token = token
+                return tenant
+        expires_at = timezone.now() + timedelta(days=7)
+        token = invitation_token('tenant', tenant.pk, expires_at)
         TenantInvitation.objects.update_or_create(
             tenant=tenant,
             defaults={
                 'email': validated_data['email'],
                 'token_digest': hashlib.sha256(token.encode()).hexdigest(),
                 'created_by': self.context['request'].user,
-                'expires_at': timezone.now() + timedelta(days=7),
+                'expires_at': expires_at,
                 'accepted_at': None,
             },
         )
@@ -424,11 +455,23 @@ class CreateMessageSerializer(serializers.Serializer):
 
 
 class PropertySerializer(serializers.ModelSerializer):
+    total_units = serializers.IntegerField(min_value=1, max_value=1000)
     occupancy_rate = serializers.SerializerMethodField()
 
     class Meta:
         model = Property
         fields = ['id', 'name', 'location', 'cluster', 'total_units', 'occupied_units', 'monthly_rent', 'tag', 'status', 'occupancy_rate', 'photo_url', 'created_at']
+
+    def create(self, validated_data):
+        validated_data['occupied_units'] = 0
+        validated_data['status'] = 'vacant'
+        with transaction.atomic():
+            prop = super().create(validated_data)
+            Unit.objects.bulk_create([
+                Unit(property=prop, unit_number=str(number), unit_type=prop.tag or 'House', rent=prop.monthly_rent or '0')
+                for number in range(1, prop.total_units + 1)
+            ])
+        return prop
 
     def get_occupancy_rate(self, obj):
         if obj.total_units == 0:
@@ -474,6 +517,7 @@ class UnitSerializer(serializers.ModelSerializer):
 
 
 class TenantSerializer(serializers.ModelSerializer):
+    can_invite = serializers.SerializerMethodField()
     property_name = serializers.CharField(source='property.name', read_only=True)
     unit_number = serializers.CharField(source='unit.unit_number', read_only=True)
     account_email = serializers.EmailField(write_only=True, required=False, allow_blank=True)
@@ -485,7 +529,10 @@ class TenantSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Tenant
-        fields = ['id', 'name', 'phone', 'property', 'property_name', 'unit', 'unit_number', 'lease_end', 'rent', 'status', 'created_at', 'account_email', 'account_linked', 'account_user_id', 'account_has_avatar', 'invitation_email', 'invitation_expires_at']
+        fields = ['id', 'name', 'phone', 'property', 'property_name', 'unit', 'unit_number', 'lease_end', 'rent', 'status', 'created_at', 'account_email', 'account_linked', 'account_user_id', 'account_has_avatar', 'invitation_email', 'invitation_expires_at', 'can_invite']
+
+    def get_can_invite(self, obj):
+        return not obj.user_id and tenant_checked_in(obj)
 
     def get_account_linked(self, obj):
         return obj.user_id is not None

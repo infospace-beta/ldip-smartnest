@@ -41,10 +41,12 @@ function roleLabel(role: string) {
 }
 
 function DashboardShell({ children }: { children: ReactNode }) {
-  const { user, logout, isAuthenticated, isLoading } = useAuth();
+  const { user, logout, refreshProfile, isAuthenticated, isLoading } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [accessError, setAccessError] = useState("");
+  const [checkingAccess, setCheckingAccess] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const role = user?.role ?? "";
   const visibleItems = useMemo(() => NAV_ITEMS.filter((item) => item.roles.includes(role)), [role]);
@@ -93,6 +95,31 @@ function DashboardShell({ children }: { children: ReactNode }) {
 
   if (isLoading || !isAuthenticated || (currentItem && !currentItem.roles.includes(role))) {
     return <div className="loading-state" role="status">Preparing your workspace…</div>;
+  }
+
+  if (user?.role === "tenant" && !user.portal_access_granted) {
+    return (
+      <main className="auth-page">
+        <section className="auth-content" aria-live="polite">
+          <h1>Your account is signed in</h1>
+          <p>Your property manager must link your tenancy before your workspace becomes available.</p>
+          <p>Give your manager your account email: <strong>{user.email}</strong>. You do not need to register again.</p>
+          {accessError && <p role="alert">{accessError}</p>}
+          <button className="button button-primary" disabled={checkingAccess} onClick={async () => {
+            setCheckingAccess(true);
+            setAccessError("");
+            try {
+              await refreshProfile();
+            } catch {
+              setAccessError("Could not check your access. Please try again.");
+            } finally {
+              setCheckingAccess(false);
+            }
+          }}>{checkingAccess ? "Checking…" : "Check my access"}</button>
+          <button className="button" onClick={() => { void logout().catch(() => setAccessError("Could not sign out. Please try again.")); }}>Sign out</button>
+        </section>
+      </main>
+    );
   }
 
   const sections = [...new Set(visibleItems.map((item) => item.section))];

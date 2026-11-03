@@ -1,5 +1,7 @@
 "use client";
 
+import PasswordInput from "@/components/PasswordInput";
+
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Suspense, useEffect, useState, type FormEvent } from "react";
@@ -70,11 +72,11 @@ function ResetPasswordFormPage() {
               <form className="auth-form" onSubmit={submit}>
                 <div className="field">
                   <label htmlFor="reset-password">New password</label>
-                  <input className="auth-input" id="reset-password" name="new_password1" type="password" autoComplete="new-password" minLength={8} required />
+                  <PasswordInput className="auth-input" id="reset-password" name="new_password1" autoComplete="new-password" minLength={8} required />
                 </div>
                 <div className="field">
                   <label htmlFor="reset-password-confirm">Repeat new password</label>
-                  <input className="auth-input" id="reset-password-confirm" name="new_password2" type="password" autoComplete="new-password" minLength={8} required />
+                  <PasswordInput className="auth-input" id="reset-password-confirm" name="new_password2" autoComplete="new-password" minLength={8} required />
                 </div>
                 <button className="button button-primary auth-submit" type="submit" disabled={loading}>
                   {loading ? "Updating…" : "Update password"}

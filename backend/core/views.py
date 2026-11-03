@@ -273,10 +273,11 @@ def register(request):
 
 @api_view(['POST'])
 @permission_classes([SmartNestAuthenticated])
+@transaction.atomic
 def create_tenant_invitation(request, pk):
     if request.user.role not in ('manager', 'staff'):
         return forbidden()
-    tenants = Tenant.objects.select_related('property', 'unit')
+    tenants = Tenant.objects.select_for_update(of=('self',)).select_related('property', 'unit')
     if request.user.role == 'manager':
         tenants = tenants.filter(property__owner=request.user)
     else:
@@ -348,7 +349,8 @@ def tenant_invitation_details(request, token):
         accepted_at__isnull=True,
         expires_at__gt=timezone.now(),
     ).first()
-    if not invitation or invitation.tenant.user_id:
+    from .invitation_tokens import tenant_checked_in
+    if not invitation or invitation.tenant.user_id or not tenant_checked_in(invitation.tenant):
         return Response({'error': 'This tenant invitation is invalid or has expired.'}, status=status.HTTP_404_NOT_FOUND)
     return Response({
         'email': invitation.email,
@@ -372,8 +374,21 @@ def login(request):
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
+class OwnProfileAuthenticated(SmartNestAuthenticated):
+    def has_permission(self, request, view):
+        # Confirmed tenants may read only their own profile while waiting for a
+        # manager to link a tenancy. Operational endpoints remain protected.
+        if request.method == 'GET':
+            if not IsAuthenticated().has_permission(request, view):
+                return False
+            if not request.user.is_active or not request.user.is_active_user:
+                raise AuthenticationFailed('This account has been disabled.')
+            return True
+        return super().has_permission(request, view)
+
+
 @api_view(['GET', 'PATCH'])
-@permission_classes([SmartNestAuthenticated])
+@permission_classes([OwnProfileAuthenticated])
 def me(request):
     if request.method == 'GET':
         return Response(UserSerializer(request.user).data)
@@ -1026,6 +1041,7 @@ def tenancy_events(request):
         return forbidden()
 
     with transaction.atomic():
+        Property.objects.select_for_update().get(pk=unit.property_id)
         unit = Unit.objects.select_for_update().get(pk=unit.pk)
         tenant = Tenant.objects.select_for_update().get(pk=tenant.pk)
         if tenant.unit_id != unit.id or tenant.property_id != unit.property_id:
@@ -1064,7 +1080,8 @@ def tenancy_events(request):
             property_id=unit.property_id,
             status='occupied',
         ).count()
-        property_record.save(update_fields=['total_units', 'occupied_units'])
+        property_record.status = 'leased' if property_record.occupied_units else 'vacant'
+        property_record.save(update_fields=['total_units', 'occupied_units', 'status'])
     return Response(TenancyEventSerializer(event).data, status=status.HTTP_201_CREATED)
 
 

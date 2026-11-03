@@ -1,5 +1,6 @@
 from django.contrib.auth.models import AbstractUser
 from django.db import models
+import uuid
 
 
 class User(AbstractUser):
@@ -365,3 +366,23 @@ class Message(models.Model):
     class Meta:
         db_table = 'messages'
         ordering = ['sent_at']
+
+
+class AccountInvitation(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    email = models.EmailField(unique=True)
+    name = models.CharField(max_length=150)
+    phone = models.CharField(max_length=20, blank=True)
+    role = models.CharField(max_length=20, choices=[('manager', 'Manager'), ('staff', 'Staff'), ('maintenance', 'Maintenance')])
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name='account_invitations')
+    token_digest = models.CharField(max_length=64, unique=True)
+    expires_at = models.DateTimeField()
+    accepted_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def issuer_valid(self):
+        issuer = self.created_by
+        return issuer.is_active and issuer.is_active_user and (
+            (issuer.role == 'admin' and self.role == 'manager') or
+            (issuer.role == 'manager' and self.role in ('staff', 'maintenance'))
+        )
