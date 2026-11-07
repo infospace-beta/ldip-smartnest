@@ -1,3 +1,4 @@
+from .image_test_utils import png_bytes
 import re
 import tempfile
 from urllib.parse import urlparse, parse_qs
@@ -274,7 +275,7 @@ class TenantAccessTests(TestCase):
         self.tenant.save(update_fields=['status'])
         image = SimpleUploadedFile(
             'handover.png',
-            b'\x89PNG\r\n\x1a\n' + b'\x00' * 12,
+            png_bytes(),
             content_type='image/png',
         )
         client = APIClient()
@@ -320,7 +321,7 @@ class TenantAccessTests(TestCase):
         self.property.save(update_fields=['owner'])
         image = SimpleUploadedFile(
             'profile.png',
-            b'\x89PNG\r\n\x1a\n' + b'\x00' * 8,
+            png_bytes(),
             content_type='image/png',
         )
         upload = self.client.patch(
@@ -447,23 +448,11 @@ class MaintenanceVendorTests(TestCase):
             {'status': 'in_progress', 'quote_amount': '1250.00', 'quote_notes': 'Replace the valve'},
             format='json',
         )
-        self.assertEqual(started.status_code, 200, started.data)
-        self.assertEqual(started.data['status'], 'in_progress')
-        self.assertEqual(str(started.data['quote_amount']), '1250.00')
+        self.assertEqual(started.status_code,400,started.data)
+        completed=client.patch(f'/api/maintenance/{job.id}/',{'status':'completed','confirmation_photo_url':'https://example.com/finished.jpg'},format='json')
+        self.assertEqual(completed.status_code,400)
+        job.refresh_from_db();self.assertEqual(job.status,'assigned')
 
-        no_photo = client.patch(
-            f'/api/maintenance/{job.id}/',
-            {'status': 'completed'},
-            format='json',
-        )
-        self.assertEqual(no_photo.status_code, 400)
-        completed = client.patch(
-            f'/api/maintenance/{job.id}/',
-            {'status': 'completed', 'confirmation_photo_url': 'https://example.com/finished.jpg'},
-            format='json',
-        )
-        self.assertEqual(completed.status_code, 200, completed.data)
-        self.assertEqual(completed.data['status'], 'completed')
 
 
 class TenantRegistrationTests(TestCase):
@@ -488,64 +477,10 @@ class TenantRegistrationTests(TestCase):
         self.assertEqual(disallowed_role.status_code, 400)
         self.assertFalse(User.objects.filter(email='manager@example.com').exists())
 
-        valid_registration = client.post(
-            '/api/auth/register/',
-            {**registration, 'consent': True},
-            format='json',
-        )
-        self.assertEqual(valid_registration.status_code, 201)
-        user = User.objects.get(email='newtenant@example.com')
-        self.assertIsNotNone(user.registration_consent_at)
-        self.assertFalse(user.portal_access_granted)
-        self.assertNotIn('tokens', valid_registration.data)
-        self.assertEqual(
-            client.post(
-                '/api/auth/login/',
-                {'email': 'newtenant@example.com', 'password': 'secure-password'},
-                format='json',
-            ).status_code,
-            400,
-        )
-
-        manager = User.objects.create_user(
-            username='manager',
-            email='manager@example.com',
-            password='secure-password',
-            role='manager',
-        )
-        property_record = Property.objects.create(name='Green Court', location='Nairobi', owner=manager)
-        unit = Unit.objects.create(
-            property=property_record,
-            unit_number='A-2',
-            unit_type='Studio',
-            rent='20000',
-        )
-        client.force_authenticate(user=manager)
-        linked = client.post(
-            '/api/tenants/',
-            {
-                'name': 'New Tenant',
-                'phone': '0700000000',
-                'account_email': 'newtenant@example.com',
-                'property': property_record.id,
-                'unit': unit.id,
-                'lease_end': '2027-01-31',
-                'rent': '20000',
-                'status': 'pending',
-            },
-            format='json',
-        )
-        self.assertEqual(linked.status_code, 201, linked.data)
-        user.refresh_from_db()
-        self.assertTrue(user.portal_access_granted)
-        self.assertEqual(
-            client.post(
-                '/api/auth/login/',
-                {'email': 'newtenant@example.com', 'password': 'secure-password'},
-                format='json',
-            ).status_code,
-            200,
-        )
+        rejected = client.post('/api/auth/register/', {**registration, 'consent': True}, format='json')
+        self.assertEqual(rejected.status_code, 400)
+        self.assertIn('invitation_token', rejected.data)
+        self.assertFalse(User.objects.filter(email=registration['email']).exists())
 
     def test_manager_can_invite_tenant_to_create_and_link_account(self):
         manager = User.objects.create_user(
@@ -796,60 +731,19 @@ class RoleAndCommunicationTests(TestCase):
             [self.unit.id],
         )
 
-    def test_manager_can_onboard_staff_and_maintenance_only(self):
+    def test_manager_invites_team_without_setting_any_password(self):
         self.client.force_authenticate(user=self.manager)
-        staff_response = self.client.post(
-            '/api/team/onboarding/',
-            {
-                'username': 'new-staff',
-                'email': 'new-staff@example.com',
-                'password': 'Staff-password-2',
-                'role': 'staff',
-            },
-            format='json',
-        )
-        self.assertEqual(staff_response.status_code, 201, staff_response.data)
-        staff_user = User.objects.get(email='new-staff@example.com')
-        self.assertEqual(staff_user.role, 'staff')
-        self.assertEqual(staff_user.onboarded_by_id, self.manager.id)
-        self.assertTrue(staff_user.check_password('Staff-password-2'))
-        self.assertFalse(staff_user.assigned_units.exists())
-
-        maintenance_response = self.client.post(
-            '/api/team/onboarding/',
-            {
-                'username': 'new-maintenance',
-                'email': 'new-maintenance@example.com',
-                'password': 'Crew-password-2',
-                'role': 'maintenance',
-            },
-            format='json',
-        )
-        self.assertEqual(maintenance_response.status_code, 201, maintenance_response.data)
-        self.assertEqual(
-            User.objects.get(email='new-maintenance@example.com').role,
-            'maintenance',
-        )
-
-        denied_role = self.client.post(
-            '/api/team/onboarding/',
-            {
-                'username': 'new-admin',
-                'email': 'new-admin@example.com',
-                'password': 'Admin-password-2',
-                'role': 'admin',
-            },
-            format='json',
-        )
-        self.assertEqual(denied_role.status_code, 400)
+        old=self.client.post('/api/team/onboarding/',{'username':'new','email':'new@example.com','password':'Secret-password-2','role':'staff'},format='json')
+        self.assertEqual(old.status_code,405)
+        self.assertFalse(User.objects.filter(email='new@example.com').exists())
+        for role in ('staff','maintenance'):
+            result=self.client.post('/api/account-invitations/',{'name':'New member','email':f'{role}@example.com','role':role},format='json')
+            self.assertEqual(result.status_code,201,result.data)
+            self.assertFalse(User.objects.filter(email=f'{role}@example.com').exists())
+        denied=self.client.post('/api/account-invitations/',{'name':'New admin','email':'admin2@example.com','role':'manager'},format='json')
+        self.assertEqual(denied.status_code,403)
         self.client.force_authenticate(user=self.tenant)
-        self.assertEqual(
-            self.client.post('/api/team/onboarding/', {}, format='json').status_code,
-            403,
-        )
-
-        self.client.force_authenticate(user=self.admin)
-        self.assertEqual(self.client.get('/api/communication/conversations/').data, [])
+        self.assertEqual(self.client.post('/api/team/onboarding/',{},format='json').status_code,403)
 
     def test_shared_scope_and_public_profiles_follow_role_access(self):
         other_property = Property.objects.create(name='Hidden Court', location='Nairobi')

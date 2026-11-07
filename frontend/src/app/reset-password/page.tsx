@@ -38,8 +38,8 @@ function ResetPasswordFormPage() {
         confirm_password: confirmPassword,
       });
       router.replace("/login?password_changed=1");
-    } catch {
-      setError("This reset link is invalid or has expired. Request a new one and try again.");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "This reset link is invalid or has expired. Request a new one and try again.");
     } finally {
       setLoading(false);
     }
@@ -67,7 +67,7 @@ function ResetPasswordFormPage() {
             <div className="auth-message" role="alert">This reset link is incomplete. <Link href="/forgot-password">Request another link</Link>.</div>
           ) : (
             <>
-              <p className="auth-description">Create a new password for your SmartNest account.</p>
+              <p className="auth-description">Create a new password for your SmartNest account.</p><p><Link href="/security?next=/reset-password">Verify your authenticator if your account requires it</Link></p>
               {error && <div className="auth-message" role="alert">{error}</div>}
               <form className="auth-form" onSubmit={submit}>
                 <div className="field">

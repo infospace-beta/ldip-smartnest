@@ -16,7 +16,7 @@ export default function HomePage() {
         </Link>
         <nav aria-label="Main navigation">
           <a href="#how-it-works">How it works</a>
-          <a href="#who-its-for">Who it’s for</a>
+          <a href="#who-its-for">Who itâ€™s for</a>
           <Link className="button button-secondary" href="/login">Sign in</Link>
         </nav>
       </header>
@@ -24,13 +24,13 @@ export default function HomePage() {
       <section className="public-hero">
         <div className="public-hero-copy">
           <div className="page-eyebrow">A calmer way to manage homes</div>
-          <h1>Good spaces.<br /><span>Better managed.</span></h1>
-          <p>SmartNest brings property teams, tenants and maintenance into one clear place—so everyday work feels easier and everyone knows what comes next.</p>
+          <h1>Manage your property.<br /><span>Simplify everyday living.</span></h1>
+          <p>SmartNest brings property teams, tenants and maintenance into one clear placeâ€”so everyday work feels easier and everyone knows what comes next.</p>
           <div className="public-actions">
-            <Link className="button button-primary" href="/login?mode=register">Create a tenant account</Link>
-            <Link className="button button-secondary" href="/login">Sign in to your workspace</Link>
+            <Link className="button button-primary" href="/demo">Try Live Demo</Link>
+            <Link className="button button-secondary" href="/get-started">Get Started</Link>
           </div>
-          <p className="public-note">Tenant accounts are linked to a home by a property manager. Already invited? <Link href="/join">Accept your invitation</Link>.</p>
+          <p className="public-note">Tenant accounts are linked to a home by a property manager. Already invited? <Link href="/get-started">Activate your account</Link>.</p>
         </div>
         <div className="public-hero-card" aria-label="SmartNest property operations overview">
           <div className="public-card-top"><span className="workspace-dot" /> One connected workspace</div>

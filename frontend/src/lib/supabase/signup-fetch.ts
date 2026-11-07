@@ -5,9 +5,9 @@ export function signupFetch(projectUrl: string, fetcher: typeof fetch = globalTh
   return async (input, init) => {
     const target = new URL(input instanceof Request ? input.url : String(input));
     const method = init?.method ?? (input instanceof Request ? input.method : "GET");
-    if (target.origin === project.origin && target.pathname === "/auth/v1/signup" && method.toUpperCase() === "POST") {
+    if (target.origin === project.origin && ["/auth/v1/signup", "/auth/v1/recover", "/auth/v1/otp"].includes(target.pathname) && method.toUpperCase() === "POST") {
       const request = new Request(input, init);
-      return fetcher("/api/auth/signup", {
+      return fetcher(`/api/auth/${target.pathname.split("/").pop()}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: await request.text(),

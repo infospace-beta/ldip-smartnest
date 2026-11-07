@@ -55,6 +55,11 @@ class SmartNestAuthenticated(IsAuthenticated):
             return False
         if not request.user.is_active_user:
             raise AuthenticationFailed('This account has been disabled.')
+        if settings.SUPABASE_AUTH_ENABLED and request.user.role in ('admin','manager'):
+            from .workflow_auth import requires_mfa
+            from rest_framework.exceptions import PermissionDenied
+            if requires_mfa(request):
+                raise PermissionDenied('Authenticator verification is required. Open Account security to continue.')
         if request.user.role == 'tenant':
             if (
                 not request.user.portal_access_granted
@@ -77,7 +82,7 @@ def has_role(user, *roles):
 
 
 def tenant_record(user):
-    return Tenant.objects.filter(user=user).first()
+    return Tenant.objects.filter(user=user, status__in=['active', 'expiring']).order_by('-created_at', '-pk').first()
 
 
 def manager_scope(queryset, user):
@@ -127,6 +132,8 @@ def staff_unit_ids(user):
     if user.role != 'staff':
         return set()
     unit_ids = set(user.assigned_units.values_list('id', flat=True))
+    if user.scope_to_assigned_units:
+        return unit_ids
     manager = user.onboarded_by
     if manager and manager.role == 'manager':
         unit_ids.update(
@@ -182,6 +189,8 @@ def can_contact(sender, recipient):
         return False
     if sender.role == 'admin':
         return True
+    if recipient.role == 'admin':
+        return sender.role == 'manager' or Conversation.objects.filter(participants=sender).filter(participants=recipient).exists()
     if sender.role == 'manager':
         return (
             recipient.role != 'admin'
@@ -206,7 +215,7 @@ def can_contact(sender, recipient):
         if recipient.role == 'maintenance':
             return MaintenanceJob.objects.filter(
                 reported_by_user=sender,
-                status__in=('assigned', 'in_progress', 'completed'),
+                status__in=('assigned', 'in_progress', 'awaiting_confirmation', 'disputed', 'completed'),
             ).filter(
                 assigned_to=recipient,
             ).exists()
@@ -391,11 +400,11 @@ class OwnProfileAuthenticated(SmartNestAuthenticated):
 @permission_classes([OwnProfileAuthenticated])
 def me(request):
     if request.method == 'GET':
-        return Response(UserSerializer(request.user).data)
+        return Response(UserSerializer(request.user,context={"request":request}).data)
     serializer = UserProfileSerializer(request.user, data=request.data, partial=True)
     if serializer.is_valid():
         serializer.save()
-        return Response(UserSerializer(serializer.instance).data)
+        return Response(UserSerializer(serializer.instance,context={"request":request}).data)
     return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -529,11 +538,7 @@ def user_assignment_options(request):
 def team_onboarding(request):
     if request.user.role != 'manager':
         return forbidden()
-    serializer = TeamMemberOnboardingSerializer(data=request.data, context={'request': request})
-    if not serializer.is_valid():
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    user = serializer.save()
-    return Response(UserAccessSerializer(user).data, status=status.HTTP_201_CREATED)
+    return Response({'error':'Send an account invitation instead. Each person must choose their own password.'},status=405)
 
 
 @api_view(['GET'])

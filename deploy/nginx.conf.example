@@ -1,0 +1,32 @@
+# Replace domains and TLS paths. This template is not installed automatically.
+# Only expose 80/443; database, Next and API ports stay private/loopback.
+server {
+    listen 80;
+    server_name your-domain.example api.your-domain.example;
+    return 301 https://$host$request_uri;
+}
+server {
+    listen 443 ssl;
+    server_name your-domain.example;
+    ssl_certificate /etc/letsencrypt/live/your-domain.example/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/your-domain.example/privkey.pem;
+    client_max_body_size 6m;
+    # Avoid logging invitation/reset query strings.
+    access_log off;
+    location / { proxy_pass http://127.0.0.1:3000; proxy_set_header Host $host; proxy_set_header X-Forwarded-Proto https; proxy_read_timeout 30s; }
+}
+server {
+    listen 443 ssl;
+    server_name api.your-domain.example;
+    ssl_certificate /etc/letsencrypt/live/api.your-domain.example/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/api.your-domain.example/privkey.pem;
+    client_max_body_size 6m;
+    access_log off;
+    location /private-media/ { return 404; }
+    location /static/ { alias /var/lib/smartnest/static/; }
+    # Disable the separate Django admin until its own MFA/access controls are installed.
+    location /admin/ { return 404; }
+    # Keep readiness private to the host/monitor network; basic liveness remains /api/health/.
+    location /api/health/ready/ { allow 127.0.0.1; deny all; proxy_pass http://127.0.0.1:8000; proxy_set_header Host $host; proxy_set_header X-Forwarded-Proto https; }
+    location / { proxy_pass http://127.0.0.1:8000; proxy_set_header Host $host; proxy_set_header X-Forwarded-Proto https; proxy_read_timeout 30s; }
+}

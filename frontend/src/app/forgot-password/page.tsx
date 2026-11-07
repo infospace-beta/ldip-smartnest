@@ -18,8 +18,8 @@ export default function ForgotPasswordPage() {
     try {
       const { data } = await authAPI.requestPasswordReset(String(form.get("email") ?? ""));
       setMessage(data.message);
-    } catch {
-      setError("We couldn’t send the request. Please try again in a few minutes.");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "We couldn’t send the request. Please try again in a few minutes.");
     } finally {
       setLoading(false);
     }

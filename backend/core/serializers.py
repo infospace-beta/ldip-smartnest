@@ -16,26 +16,23 @@ from .models import (
 
 
 def validate_image_upload(uploaded_file, label='Photos'):
-    if uploaded_file.size > 5 * 1024 * 1024:
-        raise serializers.ValidationError(f'{label} must be 5 MB or smaller.')
-    signature = uploaded_file.read(12)
-    uploaded_file.seek(0)
-    is_image = (
-        signature.startswith(b'\xff\xd8\xff')
-        or signature.startswith(b'\x89PNG\r\n\x1a\n')
-        or (signature.startswith(b'RIFF') and signature[8:12] == b'WEBP')
-    )
-    if not is_image:
-        raise serializers.ValidationError(f'Upload a valid JPEG, PNG, or WebP image for {label.lower()}.')
-    return uploaded_file
+    from .images import clean_image
+    return clean_image(uploaded_file, label)
 
 
 class UserSerializer(serializers.ModelSerializer):
+    requires_mfa = serializers.SerializerMethodField()
+
+    def get_requires_mfa(self,obj):
+        from .workflow_auth import requires_mfa
+        request=self.context.get("request")
+        return requires_mfa(request) if request else False
+
     has_avatar = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ['id', 'email', 'username', 'role', 'phone', 'avatar', 'has_avatar', 'property_cluster', 'is_active_user', 'portal_access_granted', 'date_joined', 'registration_consent_at']
+        fields = ['requires_mfa', 'id', 'email', 'username', 'role', 'phone', 'avatar', 'has_avatar', 'property_cluster', 'is_active_user', 'portal_access_granted', 'date_joined', 'registration_consent_at']
         read_only_fields = ['id', 'date_joined', 'registration_consent_at']
 
     def get_has_avatar(self, obj):
@@ -58,26 +55,16 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         remove_avatar = validated_data.pop('remove_avatar', False)
-        old_photo = instance.avatar_image if remove_avatar else None
+        old_photo = instance.avatar_image if remove_avatar or validated_data.get('avatar_image') else None
         if remove_avatar:
             validated_data['avatar_image'] = ''
         instance = super().update(instance, validated_data)
-        if old_photo:
-            old_photo.delete(save=False)
+        if old_photo and old_photo.name != instance.avatar_image.name:
+            transaction.on_commit(lambda: old_photo.delete(save=False))
         return instance
 
     def validate_avatar_image(self, uploaded_file):
-        if uploaded_file.size > 5 * 1024 * 1024:
-            raise serializers.ValidationError('Profile photos must be 5 MB or smaller.')
-        signature = uploaded_file.read(12)
-        uploaded_file.seek(0)
-        if not (
-            signature.startswith(b'\xff\xd8\xff')
-            or signature.startswith(b'\x89PNG\r\n\x1a\n')
-            or (signature.startswith(b'RIFF') and signature[8:12] == b'WEBP')
-        ):
-            raise serializers.ValidationError('Upload a valid JPEG, PNG, or WebP image.')
-        return uploaded_file
+        return validate_image_upload(uploaded_file, 'Profile photos')
 
     def validate_phone(self, value):
         if value and User.objects.filter(phone=value).exclude(pk=self.instance.pk).exists():
@@ -88,7 +75,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
 class UserRegistrationSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, min_length=8)
     consent = serializers.BooleanField(write_only=True, required=True)
-    invitation_token = serializers.CharField(write_only=True, required=False)
+    invitation_token = serializers.CharField(write_only=True, required=True, allow_blank=False)
 
     class Meta:
         model = User
@@ -143,6 +130,8 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         invitation_token = validated_data.pop('invitation_token', None)
         validated_data['registration_consent_at'] = timezone.now()
         invitation = getattr(self, '_invitation', None) if invitation_token else None
+        if invitation:
+            validated_data['identity_verified_at'] = timezone.now()
         validated_data['portal_access_granted'] = invitation is not None
         user = User(**validated_data)
         user.set_password(password)
@@ -164,6 +153,8 @@ class LoginSerializer(serializers.Serializer):
         user = authenticate(username=email, password=password)
         if not user:
             raise serializers.ValidationError('Invalid email or password.')
+        if user.supabase_user_id:
+            raise serializers.ValidationError('Use the secure SmartNest sign-in service for this account.')
         if not user.is_active or not user.is_active_user:
             raise serializers.ValidationError('Account is disabled.')
         if user.role == 'tenant' and (
@@ -205,8 +196,8 @@ class UserAccessSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         role = attrs.get('role', getattr(self.instance, 'role', None))
-        if role != 'staff' and attrs.get('assigned_units'):
-            raise serializers.ValidationError({'assigned_units': 'Unit assignments are only available for staff.'})
+        if role not in ('staff', 'maintenance') and attrs.get('assigned_units'):
+            raise serializers.ValidationError({'assigned_units': 'Unit assignments are only available for staff and service providers.'})
         if role != 'manager' and attrs.get('managed_properties'):
             raise serializers.ValidationError({'managed_properties': 'Property ownership can only be assigned to managers.'})
         return attrs
@@ -220,7 +211,7 @@ class UserAccessSerializer(serializers.ModelSerializer):
         user = super().update(instance, validated_data)
         if assigned_units is not None:
             user.assigned_units.set(assigned_units)
-        elif user.role != 'staff':
+        elif user.role not in ('staff', 'maintenance'):
             user.assigned_units.clear()
         if managed_properties is not None:
             Property.objects.filter(owner=user).update(owner=None)
@@ -408,25 +399,14 @@ class TenancyEventSerializer(serializers.ModelSerializer):
         return bool(obj.evidence_photo)
 
     def validate_evidence_upload(self, uploaded_file):
-        if uploaded_file.size > 5 * 1024 * 1024:
-            raise serializers.ValidationError('Photos must be 5 MB or smaller.')
-        signature = uploaded_file.read(12)
-        uploaded_file.seek(0)
-        is_image = (
-            signature.startswith(b'\xff\xd8\xff')
-            or signature.startswith(b'\x89PNG\r\n\x1a\n')
-            or (signature.startswith(b'RIFF') and signature[8:12] == b'WEBP')
-        )
-        if not is_image:
-            raise serializers.ValidationError('Upload a valid JPEG, PNG, or WebP image.')
-        return uploaded_file
+        return validate_image_upload(uploaded_file, 'Handover photos')
 
     def validate(self, attrs):
         tenant = attrs['tenant']
         unit = attrs['unit']
         action = attrs['action']
         if tenant.unit_id != unit.id or tenant.property_id != unit.property_id:
-            raise serializers.ValidationError({'unit': 'Choose the tenant’s assigned unit.'})
+            raise serializers.ValidationError({'unit': 'Choose the tenantâ€™s assigned unit.'})
         if action == 'check_in' and (unit.status != 'vacant' or tenant.status != 'pending'):
             raise serializers.ValidationError({'action': 'Only a pending tenancy in a vacant unit can be checked in.'})
         if action == 'check_out' and (unit.status != 'occupied' or tenant.status not in ('active', 'expiring')):
@@ -560,11 +540,14 @@ class TenantSerializer(serializers.ModelSerializer):
         account = User.objects.filter(email__iexact=value, role='tenant').first()
         if not account:
             raise serializers.ValidationError('No tenant account exists with this email address.')
-        linked_records = Tenant.objects.filter(user=account)
+        # Never promote a historical unverified email pre-claim into tenancy access.
+        if not account.supabase_user_id and not account.identity_verified_at:
+            raise serializers.ValidationError('This account has not accepted a verified invitation. Contact support to verify account ownership.')
+        linked_records = Tenant.objects.filter(user=account, status__in=['active', 'expiring'])
         if self.instance:
             linked_records = linked_records.exclude(pk=self.instance.pk)
         if linked_records.exists():
-            raise serializers.ValidationError('This account is already linked to a tenant record.')
+            raise serializers.ValidationError('This account is already linked to an active tenancy. Complete check-out first.')
         return account
 
     def validate(self, attrs):

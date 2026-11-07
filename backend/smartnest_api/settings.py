@@ -20,10 +20,51 @@ if len(SECRET_KEY.strip()) < 50 or SECRET_KEY.startswith('django-insecure-'):
         'Set DJANGO_SECRET_KEY to a private, randomly generated value of at least 50 characters.'
     )
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+def env_bool(name, default=False):
+    value = os.getenv(name, str(default)).strip().lower()
+    if value not in ('true', 'false', '1', '0'):
+        raise ImproperlyConfigured(f'{name} must be true or false.')
+    return value in ('true', '1')
 
-ALLOWED_HOSTS = ['*']
+
+def env_list(name, default=''):
+    return [value.strip() for value in os.getenv(name, default).split(',') if value.strip()]
+
+
+ENVIRONMENT = os.getenv('DJANGO_ENV', 'development')
+if ENVIRONMENT not in ('development', 'test', 'production'):
+    raise ImproperlyConfigured('DJANGO_ENV must be development, test or production.')
+PRODUCTION = ENVIRONMENT == 'production'
+DEBUG = env_bool('DEBUG', not PRODUCTION)
+ALLOWED_HOSTS = env_list('DJANGO_ALLOWED_HOSTS', '' if PRODUCTION else 'localhost,127.0.0.1,[::1],testserver')
+if PRODUCTION and (DEBUG or not ALLOWED_HOSTS or '*' in ALLOWED_HOSTS):
+    raise ImproperlyConfigured('Production requires DEBUG=false and explicit DJANGO_ALLOWED_HOSTS.')
+if PRODUCTION and not os.getenv('NOTICE_ENCRYPTION_KEYS'):
+    raise ImproperlyConfigured('Production requires separately backed-up NOTICE_ENCRYPTION_KEYS.')
+if os.getenv('NOTICE_ENCRYPTION_KEYS'):
+    from cryptography.fernet import Fernet
+    try:
+        for key in env_list('NOTICE_ENCRYPTION_KEYS'):
+            Fernet(key.encode())
+    except ValueError:
+        raise ImproperlyConfigured('NOTICE_ENCRYPTION_KEYS must contain valid Fernet keys.') from None
+
+SECURE_SSL_REDIRECT = PRODUCTION
+SESSION_COOKIE_SECURE = PRODUCTION
+CSRF_COOKIE_SECURE = PRODUCTION
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = 'Lax'
+CSRF_COOKIE_SAMESITE = 'Lax'
+SECURE_HSTS_SECONDS = 31536000 if PRODUCTION else 0
+# Opt in only after verifying every subdomain supports HTTPS.
+SECURE_HSTS_INCLUDE_SUBDOMAINS = env_bool('DJANGO_HSTS_SUBDOMAINS')
+SECURE_HSTS_PRELOAD = env_bool('DJANGO_HSTS_PRELOAD')
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = 'same-origin'
+X_FRAME_OPTIONS = 'DENY'
+if env_bool('DJANGO_TRUST_PROXY_HTTPS'):
+    # The proxy must strip client-supplied forwarding headers before setting this.
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 # Application definition
 
@@ -53,6 +94,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'core.audit_middleware.AuditMiddleware',
 ]
 
 ROOT_URLCONF = 'smartnest_api.urls'
@@ -74,17 +116,21 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'smartnest_api.wsgi.application'
 
-# Database - PostgreSQL
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'smartnest_db',
-        'USER': 'postgres',
-        'PASSWORD': 'postgres',
-        'HOST': 'localhost',
-        'PORT': '5432',
-    }
-}
+# Runtime database credentials are external to source control.
+DATABASES = {'default': {
+    'ENGINE': 'django.db.backends.postgresql',
+    'NAME': os.getenv('DB_NAME', 'smartnest_db'),
+    'USER': os.getenv('DB_USER', ''),
+    'PASSWORD': os.getenv('DB_PASSWORD', ''),
+    'HOST': os.getenv('DB_HOST', '127.0.0.1'),
+    'PORT': os.getenv('DB_PORT', '5432'),
+    'CONN_MAX_AGE': 60,
+    'OPTIONS': {'connect_timeout': 5, 'sslmode': os.getenv('DB_SSLMODE', 'require' if PRODUCTION else 'prefer')},
+}}
+if PRODUCTION and (not DATABASES['default']['PASSWORD'] or not DATABASES['default']['USER']
+                   or DATABASES['default']['USER'].lower() in ('postgres', 'root')
+                   or DATABASES['default']['OPTIONS']['sslmode'] not in ('require', 'verify-ca', 'verify-full')):
+    raise ImproperlyConfigured('Production requires private credentials for a non-superuser DB account and database TLS.')
 
 # Custom user model
 AUTH_USER_MODEL = 'core.User'
@@ -113,6 +159,17 @@ USE_TZ = True
 
 # Static files
 STATIC_URL = 'static/'
+STATIC_ROOT = Path(os.getenv('DJANGO_STATIC_ROOT', str(BASE_DIR / 'staticfiles')))
+# This path must be private, persistent and backed up; never expose it through a web alias.
+MEDIA_ROOT = Path(os.getenv('DJANGO_MEDIA_ROOT', str(BASE_DIR)))
+MEDIA_URL = '/private-media/'
+FILE_UPLOAD_PERMISSIONS = 0o600
+DATA_UPLOAD_MAX_MEMORY_SIZE = 6 * 1024 * 1024
+FILE_UPLOAD_MAX_MEMORY_SIZE = 1024 * 1024
+AUTOMATION_HEARTBEAT_PATH = Path(os.getenv('AUTOMATION_HEARTBEAT_PATH', str(BASE_DIR / '.automation-heartbeat')))
+AUTOMATION_HEARTBEAT_MAX_AGE = int(os.getenv('AUTOMATION_HEARTBEAT_MAX_AGE', '180'))
+if PRODUCTION and (not os.getenv('DJANGO_MEDIA_ROOT') or not MEDIA_ROOT.is_absolute()):
+    raise ImproperlyConfigured('Production requires an absolute private persistent DJANGO_MEDIA_ROOT.')
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
@@ -120,7 +177,9 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # Django REST Framework
 SUPABASE_URL = os.getenv('SUPABASE_URL', '').rstrip('/')
 SUPABASE_PUBLISHABLE_KEY = os.getenv('SUPABASE_PUBLISHABLE_KEY', '')
-SUPABASE_AUTH_ENABLED = os.getenv('SUPABASE_AUTH_ENABLED', 'false').lower() == 'true'
+SUPABASE_AUTH_ENABLED = env_bool('SUPABASE_AUTH_ENABLED')
+if PRODUCTION and not SUPABASE_AUTH_ENABLED:
+    raise ImproperlyConfigured('Production requires Supabase authentication with privileged MFA.')
 if SUPABASE_AUTH_ENABLED and (
     not SUPABASE_URL.startswith('https://') or not SUPABASE_PUBLISHABLE_KEY
 ):
@@ -155,6 +214,7 @@ EMAIL_BACKEND = os.getenv(
     'DJANGO_EMAIL_BACKEND',
     'django.core.mail.backends.console.EmailBackend' if DEBUG else 'django.core.mail.backends.smtp.EmailBackend',
 )
+EMAIL_TIMEOUT = 10
 EMAIL_HOST = os.getenv('EMAIL_HOST', '')
 EMAIL_PORT = int(os.getenv('EMAIL_PORT', '587'))
 EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
@@ -165,22 +225,19 @@ DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'SmartNest <no-reply@smartn
 # Frontend
 FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000').rstrip('/')
 
-# CORS
-CORS_ALLOW_ALL_ORIGINS = DEBUG
+# Explicit origins even in development; no credentialed wildcard access.
+CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOW_CREDENTIALS = True
-CORS_ALLOWED_ORIGINS = [
-    'http://localhost:3000',
-    'http://127.0.0.1:3000',
-    'http://localhost:3001',
-    'http://127.0.0.1:3001',
-    FRONTEND_URL,
-]
+default_origins = '' if PRODUCTION else 'http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001'
+CORS_ALLOWED_ORIGINS = env_list('DJANGO_CORS_ORIGINS', default_origins)
+CSRF_TRUSTED_ORIGINS = env_list('DJANGO_CSRF_ORIGINS', default_origins)
+if PRODUCTION and (not FRONTEND_URL.startswith('https://') or not CORS_ALLOWED_ORIGINS
+                   or not CSRF_TRUSTED_ORIGINS
+                   or any(not origin.startswith('https://') or '*' in origin for origin in CORS_ALLOWED_ORIGINS + CSRF_TRUSTED_ORIGINS)):
+    raise ImproperlyConfigured('Production requires HTTPS FRONTEND_URL and explicit HTTPS CORS/CSRF origins.')
 
-# CSRF trusted origins
-CSRF_TRUSTED_ORIGINS = [
-    'http://localhost:3000',
-    'http://127.0.0.1:3000',
-    'http://localhost:3001',
-    'http://127.0.0.1:3001',
-    FRONTEND_URL,
-]
+LOGGING = {
+    'version': 1, 'disable_existing_loggers': False,
+    'handlers': {'console': {'class': 'logging.StreamHandler'}},
+    'loggers': {'core': {'handlers': ['console'], 'level': 'INFO', 'propagate': False}},
+}

@@ -1,3 +1,4 @@
+from .image_test_utils import png_bytes
 from tempfile import TemporaryDirectory
 
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -22,7 +23,7 @@ class ProfilePhotoTests(TestCase):
         self.client.force_authenticate(self.user)
 
     def photo(self):
-        return SimpleUploadedFile('profile.png', b'\x89PNG\r\n\x1a\n' + b'\x00' * 8, content_type='image/png')
+        return SimpleUploadedFile('profile.png', png_bytes(), content_type='image/png')
 
     def test_upload_and_remove_photo_preserves_account_and_deletes_file(self):
         upload = self.client.patch('/api/auth/me/', {'avatar_image': self.photo()}, format='multipart')
@@ -32,7 +33,8 @@ class ProfilePhotoTests(TestCase):
         photo_name = self.user.avatar_image.name
         storage = self.user.avatar_image.storage
         self.assertTrue(storage.exists(photo_name))
-        removed = self.client.patch('/api/auth/me/', {'remove_avatar': True}, format='json')
+        with self.captureOnCommitCallbacks(execute=True):
+            removed = self.client.patch('/api/auth/me/', {'remove_avatar': True}, format='json')
         self.assertEqual(removed.status_code, 200, removed.data)
         self.assertFalse(removed.data['has_avatar'])
         self.assertEqual(removed.data['username'], 'photo-user')

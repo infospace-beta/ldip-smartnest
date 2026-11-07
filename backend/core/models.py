@@ -22,6 +22,7 @@ class User(AbstractUser):
     is_active_user = models.BooleanField(default=True)
     portal_access_granted = models.BooleanField(default=False)
     registration_consent_at = models.DateTimeField(null=True, blank=True)
+    identity_verified_at = models.DateTimeField(null=True, blank=True, editable=False)
     onboarded_by = models.ForeignKey(
         'self',
         on_delete=models.SET_NULL,
@@ -29,6 +30,7 @@ class User(AbstractUser):
         blank=True,
         related_name='onboarded_team_members',
     )
+    scope_to_assigned_units = models.BooleanField(default=False)
     assigned_units = models.ManyToManyField('Unit', related_name='assigned_users', blank=True)
 
     USERNAME_FIELD = 'email'
@@ -95,13 +97,14 @@ class Unit(models.Model):
 
 
 class Tenant(models.Model):
+    move_out_at = models.DateTimeField(null=True,blank=True)
     STATUS_CHOICES = [
         ('active', 'Active'),
         ('expiring', 'Expiring Soon'),
         ('pending', 'Pending'),
     ]
 
-    user = models.OneToOneField(User, on_delete=models.CASCADE, null=True, blank=True, related_name='tenant_profile')
+    user = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True, related_name='tenancies')
     name = models.CharField(max_length=200)
     phone = models.CharField(max_length=20)
     property = models.ForeignKey(Property, on_delete=models.CASCADE, related_name='tenants')
@@ -114,6 +117,10 @@ class Tenant(models.Model):
     class Meta:
         db_table = 'tenants'
         ordering = ['name']
+        constraints = [models.UniqueConstraint(
+            fields=['user'], condition=models.Q(status__in=['active', 'expiring']),
+            name='one_active_tenancy_per_user',
+        )]
 
     def __str__(self):
         return self.name
@@ -162,6 +169,12 @@ class Payment(models.Model):
 
 
 class Notice(models.Model):
+    sender = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='authored_notices')
+    recipients = models.ManyToManyField(User, through='NoticeReceipt', related_name='directed_notices')
+    important = models.BooleanField(default=False)
+    encrypted_content = models.TextField(blank=True)
+    link = models.CharField(max_length=200, blank=True)
+
     ICON_CHOICES = [
         ('receipt_long', 'receipt_long'),
         ('campaign', 'campaign'),
@@ -186,11 +199,32 @@ class Notice(models.Model):
         db_table = 'notices'
         ordering = ['-created_at']
 
+    def save(self,*args,**kwargs):
+        if self.title or self.text:
+            from .workflow_crypto import seal
+            self.encrypted_content=seal(self.title,self.text);self.title='';self.text=''
+            if kwargs.get('update_fields'):
+                kwargs['update_fields']=set(kwargs['update_fields'])|{'title','text','encrypted_content'}
+        super().save(*args,**kwargs)
+
     def __str__(self):
-        return self.title
+        return 'Confidential notice'
 
 
 class MaintenanceJob(models.Model):
+    category = models.CharField(max_length=40, default='general')
+    description = models.TextField(blank=True)
+    requires_quotation = models.BooleanField(default=False)
+    approved_budget = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    visit_at = models.DateTimeField(null=True, blank=True)
+    due_at = models.DateTimeField(null=True, blank=True)
+    reminder_at = models.DateTimeField(null=True, blank=True)
+    escalated_at = models.DateTimeField(null=True, blank=True)
+    completion_notes = models.TextField(blank=True)
+    completion_photo = models.FileField(upload_to='maintenance-completion/%Y/%m/', blank=True)
+    tenant_response = models.TextField(blank=True)
+    conversation = models.OneToOneField('Conversation', null=True, blank=True, on_delete=models.SET_NULL, related_name='maintenance_job')
+
     PRIORITY_CHOICES = [
         ('high', 'High'),
         ('medium', 'Medium'),
@@ -199,6 +233,9 @@ class MaintenanceJob(models.Model):
 
     STATUS_CHOICES = [
         ('pending_approval', 'Pending approval'),
+        ('awaiting_provider', 'Awaiting provider'),
+        ('awaiting_confirmation', 'Awaiting tenant confirmation'),
+        ('disputed', 'Disputed'),
         ('logged', 'Logged'),
         ('assigned', 'Assigned'),
         ('in_progress', 'In Progress'),
@@ -227,7 +264,7 @@ class MaintenanceJob(models.Model):
         blank=True,
         related_name='assigned_maintenance_jobs',
     )
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='assigned')
+    status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='assigned')
     quote_amount = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     quote_notes = models.TextField(blank=True)
     damage_photo = models.FileField(upload_to='maintenance/%Y/%m/', blank=True)
@@ -294,6 +331,25 @@ class Expense(models.Model):
 
 
 class UnitInspection(models.Model):
+    tenant = models.ForeignKey(Tenant, null=True, blank=True, on_delete=models.SET_NULL, related_name='inspections')
+    inspector = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='inspections_to_perform')
+    source_event = models.OneToOneField('TenancyEvent', null=True, blank=True, on_delete=models.SET_NULL, related_name='inspection')
+    scheduled_at = models.DateTimeField(null=True, blank=True)
+    requested_at = models.DateTimeField(null=True, blank=True)
+    purpose = models.CharField(max_length=300, blank=True)
+    status = models.CharField(max_length=30, default='awaiting_confirmation')
+    completed_at = models.DateTimeField(null=True, blank=True)
+    acknowledged_at = models.DateTimeField(null=True, blank=True)
+    agrees_with_report = models.BooleanField(null=True, blank=True)
+    tenant_comments = models.TextField(blank=True)
+    check_in = models.ForeignKey('self', null=True, blank=True, on_delete=models.SET_NULL, related_name='checkout_comparisons')
+    maintenance = models.ForeignKey(MaintenanceJob, null=True, blank=True, on_delete=models.SET_NULL, related_name='source_inspections')
+    proposed_charge = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    charge_reason = models.TextField(blank=True)
+    charge_response = models.CharField(max_length=20, blank=True)
+    charge_comments = models.TextField(blank=True)
+    reminded_at = models.DateTimeField(null=True, blank=True)
+
     INSPECTION_TYPE_CHOICES = [
         ('routine', 'Routine'),
         ('move_in', 'Move-in'),
@@ -369,6 +425,8 @@ class Message(models.Model):
 
 
 class AccountInvitation(models.Model):
+    property = models.ForeignKey(Property,null=True,blank=True,on_delete=models.PROTECT)
+    unit = models.ForeignKey(Unit,null=True,blank=True,on_delete=models.PROTECT)
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     email = models.EmailField(unique=True)
     name = models.CharField(max_length=150)
@@ -382,7 +440,56 @@ class AccountInvitation(models.Model):
 
     def issuer_valid(self):
         issuer = self.created_by
-        return issuer.is_active and issuer.is_active_user and (
+        scope_valid = not self.property_id or issuer.role == 'admin' or self.property.owner_id == issuer.pk
+        scope_valid = scope_valid and (not self.unit_id or self.unit.property_id == self.property_id)
+        return scope_valid and issuer.is_active and issuer.is_active_user and (
             (issuer.role == 'admin' and self.role == 'manager') or
             (issuer.role == 'manager' and self.role in ('staff', 'maintenance'))
         )
+
+
+class NoticeReceipt(models.Model):
+    notice = models.ForeignKey(Notice, on_delete=models.CASCADE, related_name='receipts')
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    read_at = models.DateTimeField(null=True, blank=True)
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['notice', 'user'], name='unique_notice_recipient')]
+
+
+class WorkflowPolicy(models.Model):
+    manager = models.OneToOneField(User, on_delete=models.CASCADE, related_name='workflow_policy')
+    enabled = models.BooleanField(default=False)
+    auto_approve = models.BooleanField(default=False)
+    auto_reassign = models.BooleanField(default=True)
+    reminders = models.BooleanField(default=True)
+    inspections_enabled = models.BooleanField(default=True)
+    spending_limit = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    category_costs = models.JSONField(default=dict, blank=True)
+    provider_categories = models.JSONField(default=dict, blank=True)
+    provider_response_hours = models.PositiveIntegerField(default=24)
+    job_due_hours = models.PositiveIntegerField(default=72)
+    inspection_frequency_days = models.PositiveIntegerField(default=90)
+    inspection_notice_hours = models.PositiveIntegerField(default=336)
+    work_start_hour = models.PositiveIntegerField(default=9)
+    work_end_hour = models.PositiveIntegerField(default=17)
+    working_days = models.JSONField(default=list, blank=True)
+    routine_sample_size = models.PositiveIntegerField(default=1)
+    inspector = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='inspection_policies')
+    last_routine_date = models.DateField(null=True, blank=True)
+    worker_seen_at = models.DateTimeField(null=True, blank=True)
+
+
+class MaintenanceOffer(models.Model):
+    job = models.ForeignKey(MaintenanceJob, on_delete=models.CASCADE, related_name='offers')
+    provider = models.ForeignKey(User, on_delete=models.PROTECT)
+    status = models.CharField(max_length=20, default='pending')
+    expires_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['job', 'provider'], name='one_offer_per_provider')]
+
+
+class InspectionPhoto(models.Model):
+    inspection = models.ForeignKey(UnitInspection, on_delete=models.CASCADE, related_name='photos')
+    image = models.FileField(upload_to='inspection-photos/%Y/%m/')
+    caption = models.CharField(max_length=200, blank=True)

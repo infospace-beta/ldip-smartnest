@@ -1,3 +1,4 @@
+from .image_test_utils import png_bytes
 import hashlib
 from datetime import timedelta
 from importlib import import_module
@@ -85,7 +86,7 @@ class OnboardingFlowTests(TestCase):
     def test_valid_handover_photo_is_saved_with_checkin(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
         with TemporaryDirectory() as media, override_settings(MEDIA_ROOT=media):
-            photo = SimpleUploadedFile('handover.png', b'\x89PNG\r\n\x1a\n'+b'\x00'*8, content_type='image/png')
+            photo = SimpleUploadedFile('handover.png', png_bytes(), content_type='image/png')
             response = self.client.post(self.checkin_url, {**self.details, 'evidence_upload': photo}, format='multipart')
             self.assertEqual(response.status_code, 201, response.data)
             self.assertTrue(TenancyEvent.objects.get().evidence_photo)

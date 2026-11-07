@@ -77,8 +77,10 @@ class MaintenanceAuthorizationTests(TestCase):
             'username': 'Property management', 'email': 'shared@example.com',
             'password': 'Testing-password-123', 'role': 'maintenance',
         }, format='json')
-        self.assertEqual(created.status_code, 201, created.data)
-        self.client.force_authenticate(User.objects.get(email='shared@example.com'))
+        self.assertEqual(created.status_code, 405, created.data)
+        self.assertFalse(User.objects.filter(email='shared@example.com').exists())
+        provider=User.objects.create_user(username='Property management',email='shared@example.com',role='maintenance',onboarded_by=self.manager)
+        self.client.force_authenticate(provider)
         self.assertEqual(self.client.get('/api/maintenance/').data, [])
         self.assertEqual(self.client.get(f'/api/maintenance/{self.job.pk}/photo/').status_code, 404)
 
@@ -87,9 +89,11 @@ class MaintenanceAuthorizationTests(TestCase):
         self.vendor.save(update_fields=['username'])
         self.client.force_authenticate(self.vendor)
         self.assertEqual([job['id'] for job in self.client.get('/api/maintenance/').data], [self.job.pk])
-        updated = self.client.patch(f'/api/maintenance/{self.job.pk}/', {
-            'status': 'in_progress', 'quote_amount': '100',
-        }, format='json')
+        from .models import MaintenanceOffer
+        from django.utils import timezone
+        from datetime import timedelta
+        MaintenanceOffer.objects.create(job=self.job,provider=self.vendor,expires_at=timezone.now()+timedelta(hours=24))
+        updated = self.client.post(f'/api/maintenance/{self.job.pk}/actions/accept/', {'visit_at':(timezone.now()+timedelta(days=1)).isoformat()}, format='json')
         self.assertEqual(updated.status_code, 200, updated.data)
         for other in (self.manager, self.staff, self.tenant_user):
             self.assertTrue(can_contact(self.vendor, other))
@@ -142,8 +146,8 @@ class MaintenanceAuthorizationTests(TestCase):
         self.job.assigned_to = None
         self.job.status = 'logged'
         self.job.save()
-        linked = self.client.patch(f'/api/maintenance/{self.job.pk}/', {
-            'assigned_to': self.vendor.pk, 'status': 'assigned',
+        linked = self.client.post(f'/api/maintenance/{self.job.pk}/approve/', {
+            'assigned_to': self.vendor.pk,
         }, format='json')
         self.assertEqual(linked.status_code, 200, linked.data)
         self.client.force_authenticate(self.vendor)
@@ -168,7 +172,9 @@ class MaintenanceAuthorizationTests(TestCase):
         response = self.client.patch(f'/api/maintenance/{self.job.pk}/', {
             'property': self.foreign_property.pk, 'unit': self.foreign_unit.pk,
         }, format='json')
-        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.status_code, 403, response.data)
+        self.job.refresh_from_db()
+        self.assertEqual(self.job.unit_id,self.unit.pk)
 
 
 class SigningConfigurationTests(SimpleTestCase):

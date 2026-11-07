@@ -1,0 +1,15 @@
+"use client";
+import {useState} from 'react';
+import Link from 'next/link';
+import api,{getApiErrorMessage} from '@/lib/api';
+import {useRecords,when} from '@/lib/workflows';
+import {WorkflowHeader,ErrorBox} from '@/components/WorkflowShared';
+interface Notice {id:number;title:string;text:string;protected:boolean;ciphertext?:string;important:boolean;is_read:boolean;created_at:string;link:string;}
+export default function NoticeWorkflow() {
+  const {items,loading,error,load}=useRecords<Notice>('/notices/');const contacts=useRecords<{id:number;username:string;role:string}>('/communication/contacts/');
+  const [failure,setFailure]=useState(''),[success,setSuccess]=useState(''),[busy,setBusy]=useState(false);
+  return <section className="flow-page"><WorkflowHeader title="Notices" description="Read notices addressed to you. Administrators see encrypted content for other important notices."/><ErrorBox message={error||failure}/>{success&&<p className="auth-message success" role="status">{success}</p>}
+    <details className="panel flow-card"><summary>Send a directed notice</summary><ErrorBox message={contacts.error}/><form className="flow-form" onSubmit={async e=>{e.preventDefault();const f=e.currentTarget,d=new FormData(f);setBusy(true);try{await api.post('/notices/',{title:d.get('title'),text:d.get('text'),recipients:d.getAll('recipients').map(Number),important:d.get('important')==='on'});f.reset();setSuccess('Notice delivered to selected recipients.');await load();}catch(e){setFailure(getApiErrorMessage(e,'Could not send notice.'));}finally{setBusy(false);}}}><label>Recipients<select name="recipients" multiple required>{contacts.items.map(c=><option value={c.id} key={c.id}>{c.username} · {c.role}</option>)}</select></label><label>Title<input name="title" required maxLength={200}/></label><label>Message<textarea name="text" required maxLength={10000}/></label><label className="flow-check"><input type="checkbox" name="important"/>Important — a protected entry will also be visible to administrators</label><button disabled={busy} className="button button-primary">Send notice</button></form></details>
+    {loading?<p role="status">Loading your notices…</p>:!items.length?<p className="empty-state">No notices directed to you.</p>:items.map(n=><article className="panel flow-card" key={n.id}><div className="flow-row"><h2>{n.title}</h2><span className="flow-badge">{n.protected?'Encrypted':n.is_read?'Read':'Unread'}{n.important?' · Important':''}</span></div><p>{when(n.created_at)}</p><p>{n.text}</p>{n.protected?<details><summary>Encrypted message</summary><code className="flow-cipher">{n.ciphertext}</code></details>:<div className="flow-actions">{n.link&&<Link className="button button-secondary" href={n.link}>View related record</Link>}{!n.is_read&&<button className="button button-secondary" disabled={busy} onClick={async()=>{setBusy(true);try{await api.post(`/notices/${n.id}/read/`);await load();}catch(e){setFailure(getApiErrorMessage(e,'Could not mark read.'));}finally{setBusy(false);}}}>Mark read</button>}</div>}</article>)}
+  </section>;
+}

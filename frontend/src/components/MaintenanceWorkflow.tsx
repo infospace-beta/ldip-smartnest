@@ -1,0 +1,57 @@
+"use client";
+import { useState,type FormEvent } from 'react';
+import Link from 'next/link';
+import { useAuth } from '@/contexts/AuthContext';
+import api,{getApiErrorMessage} from '@/lib/api';
+import { categories,pretty,when,useRecords,uploadForm,postAction,type Repair } from '@/lib/workflows';
+import { WorkflowHeader,PrivatePhoto,ErrorBox } from '@/components/WorkflowShared';
+
+export default function MaintenanceWorkflow() {
+  const {user}=useAuth();const {items,loading,error,load}=useRecords<Repair>('/maintenance/');
+  const [message,setMessage]=useState(''),[failure,setFailure]=useState(''),[busy,setBusy]=useState(false);
+  const act=async(job:Repair,action:string,data:unknown={})=>{setBusy(true);setFailure('');setMessage('');try{await postAction(`/maintenance/${job.id}`,action,data);setMessage('Repair updated.');await load();}catch(e){setFailure(getApiErrorMessage(e,'Could not update this repair.'));}finally{setBusy(false);}};
+  const submit=async(e:FormEvent<HTMLFormElement>)=>{e.preventDefault();const form=e.currentTarget;setBusy(true);setFailure('');try{const r=await api.post('/maintenance/',uploadForm(form),{headers:{'Content-Type':'multipart/form-data'}});form.reset();setMessage(r.data.linked_existing?'This issue is already open. Your request is linked to the existing repair.':'Request submitted with your property, unit and contact details.');await load();}catch(e){setFailure(getApiErrorMessage(e,'Could not submit your request.'));}finally{setBusy(false);}};
+  return <section className="flow-page"><WorkflowHeader title="Maintenance" description="Request, approve, coordinate and confirm repairs in one place.">{user?.role==='manager'&&<Link className="button button-secondary" href="/dashboard/automations">Automation settings</Link>}</WorkflowHeader>
+    <ErrorBox message={error||failure}/>{message&&<p role="status" className="auth-message success">{message}</p>}
+    {user?.role==='tenant'&&<details className="panel flow-card"><summary>Report a repair</summary><form className="flow-form" onSubmit={submit}>
+      <label>Category<select name="category">{categories.map(c=><option key={c}>{c}</option>)}</select></label>
+      <label>Problem<input name="issue" required maxLength={200} placeholder="What needs fixing?"/></label>
+      <label>Description<textarea name="description" maxLength={10000} placeholder="Tell us what happened"/></label>
+      <label>Priority<select name="priority" defaultValue="medium"><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></label>
+      <label>Photo<input type="file" name="damage_photo_upload" accept="image/jpeg,image/png,image/webp"/></label>
+      <label className="flow-check"><input type="checkbox" name="requires_quotation" value="true"/>This needs a quotation</label>
+      <p>Your property, unit and contact information are added automatically.</p><button className="button button-primary" disabled={busy}>Submit request</button>
+    </form></details>}
+    {user?.role==='manager'&&<ManagerRepair onCreated={load}/>}
+    {loading?<p role="status">Loading repairs…</p>:!items.length?<div className="empty-state">No repair requests yet.</div>:<div className="flow-grid">{items.map(j=><article className="panel flow-card" key={j.id}>
+      <div className="flow-row"><span className="page-eyebrow">{j.job_id}</span><span className={`flow-badge ${j.priority==='high'?'urgent':''}`}>{j.priority} priority</span></div>
+      <h2>{j.issue}</h2><p>{j.property_name} · {j.unit_number} · {pretty(j.category)}</p><span className="flow-badge">{pretty(j.status)}</span>
+      {j.description&&<p>{j.description}</p>}{j.has_damage_photo&&<PrivatePhoto path={`/maintenance/${j.id}/photo/`} label="Reported problem"/>}{j.inspection_photos?.map(p=><PrivatePhoto key={p.id} path={`/maintenance/${j.id}/inspection-photos/${p.id}/`} label={p.caption||'Inspection issue'}/>)}
+      <p>Reported by {j.contact.name}{user?.role!=='tenant'&&<> · <a href={`mailto:${j.contact.email}`}>{j.contact.email}</a> · {j.contact.phone}</>}</p>
+      <p>Provider: {j.assigned_to_name||'Awaiting assignment'}</p>{j.visit_at&&<p>Proposed visit: {when(j.visit_at)}</p>}{j.due_at&&<p>Target completion: {when(j.due_at)}</p>}
+      {j.quote_amount!==null&&<p>Quotation: KES {String(j.quote_amount)} · {j.quote_notes}</p>}{j.manager_notes&&<p>Manager: {j.manager_notes}</p>}
+      {user?.role==='manager'&&j.status==='pending_approval'&&<><p>Suggested provider: <strong>{j.suggested_provider?.username||'Configure eligible service providers in automation settings'}</strong></p><form className="flow-form" onSubmit={e=>{e.preventDefault();const d=new FormData(e.currentTarget);void act(j,'approve',{note:String(d.get('note')||''),...(j.suggested_provider?{assigned_to:j.suggested_provider.id}:{})});}}><label>Approval note<input name="note" maxLength={5000}/></label><div className="flow-actions"><button disabled={busy} className="button button-primary">Approve</button><button disabled={busy} className="button button-secondary" type="button" onClick={()=>void act(j,'reject',{reason:'Request rejected by property manager.'})}>Reject</button></div></form></>}
+      {user?.role==='manager'&&['assigned','awaiting_provider','in_progress'].includes(j.status)&&<ManualAssignment repair={j} busy={busy} onAssign={id=>void act(j,'reassign',{assigned_to:id})}/>}
+      {user?.role==='manager'&&j.status==='disputed'&&<button className="button button-primary" disabled={busy} onClick={()=>void act(j,'resolve-dispute',{note:'Dispute reviewed; repair reopened for approval.'})}>Review and reopen repair</button>}
+      {user?.role==='maintenance'&&j.status==='assigned'&&<form className="flow-form" onSubmit={e=>{e.preventDefault();const d=new FormData(e.currentTarget);void act(j,'accept',{visit_at:new Date(String(d.get('visit_at'))).toISOString()});}}><p>Respond before {when(j.offer_expires_at)}</p><label>Proposed visit time<input required type="datetime-local" name="visit_at"/></label><div className="flow-actions"><button disabled={busy} className="button button-primary">Accept task</button><button type="button" disabled={busy} className="button button-secondary" onClick={()=>void act(j,'decline')}>Decline</button></div></form>}
+      {user?.role==='maintenance'&&['assigned','in_progress'].includes(j.status)&&<details><summary>Submit a quotation for approval</summary><form className="flow-form" onSubmit={e=>{e.preventDefault();const d=new FormData(e.currentTarget);void act(j,'quote',{quote_amount:d.get('quote_amount'),note:d.get('note')});}}><label>Amount (KES)<input name="quote_amount" type="number" min="0" step="0.01" required/></label><label>Details<textarea name="note"/></label><button className="button button-secondary" disabled={busy}>Send quote</button></form></details>}
+      {user?.role==='maintenance'&&j.status==='in_progress'&&<form className="flow-form" onSubmit={e=>{e.preventDefault();void act(j,'complete',uploadForm(e.currentTarget));}}><label>Completion details<textarea name="completion_notes"/></label><label>Completion photo<input type="file" name="completion_photo" accept="image/jpeg,image/png,image/webp"/></label><button className="button button-primary" disabled={busy}>Submit completed work</button></form>}
+      {j.completion_notes&&<p><strong>Completion report:</strong> {j.completion_notes}</p>}{j.has_completion_photo&&<PrivatePhoto path={`/maintenance/${j.id}/completion-photo/`} label="Completed repair"/>}
+      {user?.role==='tenant'&&j.status==='awaiting_confirmation'&&<form className="flow-form" onSubmit={e=>{e.preventDefault();void act(j,'confirm',{note:new FormData(e.currentTarget).get('note')});}}><label>Your comments<textarea name="note"/></label><div className="flow-actions"><button disabled={busy} className="button button-primary">Confirm resolved</button><button type="button" disabled={busy} className="button button-secondary" onClick={e=>{const f=e.currentTarget.closest('form');void act(j,'dispute',{note:f?new FormData(f).get('note'):''});}}>Report a dispute</button></div></form>}
+      {j.tenant_response&&<p>Tenant response: {j.tenant_response}</p>}{j.conversation_id&&['tenant','maintenance'].includes(user?.role||'')&&<RepairConversation id={j.conversation_id}/>}
+    </article>)}</div>}
+  </section>;
+}
+function ManagerRepair({onCreated}:{onCreated:()=>Promise<void>}) {
+  const {items}=useRecords<{id:number;name:string;unit_number:string;property_name:string}>('/tenants/');const [error,setError]=useState(''),[busy,setBusy]=useState(false);
+  return <details className="panel flow-card"><summary>Create a request for a tenant manually</summary><ErrorBox message={error}/><form className="flow-form" onSubmit={async e=>{e.preventDefault();const f=e.currentTarget;setBusy(true);try{await api.post('/maintenance/',uploadForm(f),{headers:{'Content-Type':'multipart/form-data'}});f.reset();await onCreated();setError('');}catch(e){setError(getApiErrorMessage(e,'Could not create request.'));}finally{setBusy(false);}}}><label>Tenant / home<select name="tenant" required><option value="">Choose tenancy</option>{items.map(t=><option key={t.id} value={t.id}>{t.name} · {t.property_name} / {t.unit_number}</option>)}</select></label><label>Category<select name="category">{categories.map(c=><option key={c}>{c}</option>)}</select></label><label>Problem<input name="issue" maxLength={200} required/></label><label>Description<textarea name="description"/></label><label>Priority<select name="priority" defaultValue="medium"><option>low</option><option>medium</option><option>high</option></select></label><label>Photo<input type="file" name="damage_photo_upload" accept="image/jpeg,image/png,image/webp"/></label><button disabled={busy} className="button button-primary">Create request</button></form></details>;
+}
+function ManualAssignment({busy,onAssign}:{repair:Repair;busy:boolean;onAssign:(id:number)=>void}) {
+  const {items}=useRecords<{id:number;username:string}>('/maintenance/assignees/');
+  return <form className="flow-form" onSubmit={e=>{e.preventDefault();onAssign(Number(new FormData(e.currentTarget).get('provider')));}}><label>Assign another eligible provider<select name="provider" required><option value="">Choose provider</option>{items.map(x=><option key={x.id} value={x.id}>{x.username}</option>)}</select></label><button disabled={busy} className="button button-secondary">Offer task</button></form>;
+}
+function RepairConversation({id}:{id:number}) {
+  const {items,error,load}=useRecords<{id:number;sender_name:string;body:string}>(`/communication/conversations/${id}/messages/`);
+  const [failure,setFailure]=useState(''),[busy,setBusy]=useState(false);
+  return <details className="flow-chat"><summary>Coordinate this repair</summary><ErrorBox message={error||failure}/><div className="flow-chat-messages">{items.map(m=><p key={m.id}><strong>{m.sender_name}:</strong> {m.body}</p>)}</div><form className="flow-form" onSubmit={async e=>{e.preventDefault();const f=e.currentTarget;setBusy(true);try{await api.post(`/communication/conversations/${id}/messages/`,{body:new FormData(f).get('body')});f.reset();await load();}catch(e){setFailure(getApiErrorMessage(e,'Could not send message.'));}finally{setBusy(false);}}}><label>Message<textarea name="body" required maxLength={5000}/></label><button disabled={busy} className="button button-primary">Send message</button><button type="button" className="button button-secondary" onClick={()=>void load()}>Refresh conversation</button></form></details>;
+}

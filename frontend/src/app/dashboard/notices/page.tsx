@@ -1,7 +1,2 @@
-"use client";
-
-import { RecordsPage } from "@/components/WorkspacePages";
-
-export default function NoticesRoute() {
-  return <RecordsPage page="notices" />;
-}
+import Component from "@/components/NoticeWorkflow";
+export default Component;

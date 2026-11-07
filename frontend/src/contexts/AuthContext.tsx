@@ -70,6 +70,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const register = useCallback(async (data: RegisterData) => {
+    if (!data.invitation_token && !data.account_invitation_token) throw new Error("An invitation is required. Ask your property manager or administrator.");
     if (!data.consent) throw new Error("Consent is required to create an account.");
     const { data: signup, error } = await createClient().auth.signUp({
       email: data.email.trim(), password: data.password,

@@ -2,8 +2,21 @@ from django.conf import settings
 from django.urls import path
 from . import views
 from . import onboarding_backend
+from . import workflow_views as workflow
+from .health import readiness
 
 urlpatterns = [
+    path('health/ready/', readiness, name='readiness'),
+    path('invitation-property-options/', workflow.invitation_property_options),
+    path('tenants/<int:pk>/move-out/', workflow.record_moveout),
+    path('maintenance/<int:pk>/inspection-photos/<int:photo_pk>/', workflow.maintenance_inspection_photo),
+    path('workflow-policy/', workflow.policy),
+    path('notices/<int:pk>/read/', workflow.read_notice),
+    path('maintenance/<int:pk>/actions/<str:action>/', workflow.maintenance_action),
+    path('maintenance/<int:pk>/completion-photo/', workflow.completion_photo),
+    path('unit-inspections/<int:pk>/actions/<str:action>/', workflow.inspection_detail),
+    path('unit-inspections/<int:pk>/photos/<int:photo_pk>/', workflow.inspection_photo),
+
     path('health/', views.health, name='health'),
     path('account-invitations/', onboarding_backend.account_invitations, name='account_invitations'),
     path('account-invitations/<str:token>/', onboarding_backend.account_invitation_details, name='account_invitation_details'),
@@ -45,15 +58,15 @@ urlpatterns = [
     path('payments/', views.payments_list, name='payments_list'),
 
     # Notices
-    path('notices/', views.notices_list, name='notices_list'),
-    path('notices/unread-count/', views.notices_unread_count, name='notices_unread_count'),
+    path('notices/', workflow.notices, name='notices_list'),
+    path('notices/unread-count/', workflow.unread, name='notices_unread_count'),
 
     # Maintenance
-    path('maintenance/', views.maintenance_list, name='maintenance_list'),
+    path('maintenance/', workflow.maintenance, name='maintenance_list'),
     path('maintenance/assignees/', views.maintenance_assignees, name='maintenance_assignees'),
-    path('maintenance/<int:pk>/', views.maintenance_detail, name='maintenance_detail'),
-    path('maintenance/<int:pk>/approve/', views.maintenance_approve, name='maintenance_approve'),
-    path('maintenance/<int:pk>/reject/', views.maintenance_reject, name='maintenance_reject'),
+    path('maintenance/<int:pk>/', workflow.maintenance_detail, name='maintenance_detail'),
+    path('maintenance/<int:pk>/approve/', workflow.maintenance_action, {'action':'approve'}, name='maintenance_approve'),
+    path('maintenance/<int:pk>/reject/', workflow.maintenance_action, {'action':'reject'}, name='maintenance_reject'),
     path('maintenance/<int:pk>/photo/', views.maintenance_photo, name='maintenance_photo'),
     path('tenancy-events/', views.tenancy_events, name='tenancy_events'),
     path('tenancy-events/<int:pk>/photo/', views.tenancy_event_photo, name='tenancy_event_photo'),
@@ -66,8 +79,8 @@ urlpatterns = [
     path('expenses/<int:pk>/', views.expense_detail, name='expense_detail'),
 
     # Unit Inspections
-    path('unit-inspections/', views.unit_inspections_list, name='unit_inspections_list'),
-    path('unit-inspections/<int:pk>/', views.unit_inspection_detail, name='unit_inspection_detail'),
+    path('unit-inspections/', workflow.inspections, name='unit_inspections_list'),
+    path('unit-inspections/<int:pk>/', workflow.inspection_detail, name='unit_inspection_detail'),
 ]
 
 if settings.SUPABASE_AUTH_ENABLED:

@@ -1,10 +1,13 @@
 import axios, { InternalAxiosRequestConfig } from "axios";
 import { createClient } from "@/lib/supabase/client";
+import { authErrorMessage } from "@/lib/supabase/auth-errors";
+import { withSessionDeadline } from "@/lib/request-deadline";
 
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
 const api = axios.create({
   baseURL: API_BASE_URL,
+  timeout: 20000,
   headers: {
     "Content-Type": "application/json",
   },
@@ -13,6 +16,10 @@ const api = axios.create({
 export function getApiErrorMessage(error: unknown, fallback: string): string {
   if (!axios.isAxiosError(error)) {
     return error instanceof Error ? error.message : fallback;
+  }
+
+  if (error.code === "ECONNABORTED" || error.code === "ETIMEDOUT") {
+    return "The request took too long. Refresh to check whether it was saved before trying again.";
   }
 
   const data: unknown = error.response?.data;
@@ -31,7 +38,7 @@ export function getApiErrorMessage(error: unknown, fallback: string): string {
 
 api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
   if (typeof window !== "undefined") {
-    const { data: { session }, error } = await createClient().auth.getSession();
+    const { data: { session }, error } = await withSessionDeadline(createClient().auth.getSession());
     if (error) throw error;
     if (session) config.headers.Authorization = `Bearer ${session.access_token}`;
   }
@@ -41,6 +48,7 @@ api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
 export default api;
 
 export interface User {
+  requires_mfa: boolean;
   id: number;
   email: string;
   username: string;
@@ -316,7 +324,7 @@ export const authAPI = {
     const { error } = await createClient().auth.resetPasswordForEmail(email, {
       redirectTo: `${window.location.origin}/auth/callback?next=/reset-password`,
     });
-    if (error) throw error;
+    if (error) throw new Error(authErrorMessage(error));
     return { data: { message: "If an active account uses that email, a password reset link has been sent." } };
   },
   confirmPasswordReset: async (data: { new_password: string; confirm_password: string }) => {
@@ -345,13 +353,14 @@ export const propertiesAPI = {
 };
 
 export const unitsAPI = {
-  checkIn: (propertyId: number, unitId: number, data: { name: string; phone: string; lease_end: string; rent: string; notes?: string; evidence_upload?: File }) => {
+  checkIn: (propertyId: number, unitId: number, data: { name: string; phone: string; lease_end: string; rent: string; notes?: string; account_email?: string; evidence_upload?: File }) => {
     const form = new FormData();
     form.append("name", data.name);
     form.append("phone", data.phone);
     form.append("lease_end", data.lease_end);
     form.append("rent", data.rent);
     if (data.notes) form.append("notes", data.notes);
+    if (data.account_email) form.append("account_email", data.account_email);
     if (data.evidence_upload) form.append("evidence_upload", data.evidence_upload);
     return api.post<Tenant>(`/properties/${propertyId}/units/${unitId}/check-in/`, form, { headers: { "Content-Type": "multipart/form-data" } });
   },
@@ -360,7 +369,7 @@ export const unitsAPI = {
 };
 
 export const accountInvitationsAPI = {
-  create: (data: { name: string; email: string; phone?: string; role: "manager" | "staff" | "maintenance" }) => api.post<TenantInvitation>("/account-invitations/", data),
+  create: (data: { name: string; email: string; phone?: string; property?: number; unit?: number; role: "manager" | "staff" | "maintenance" }) => api.post<TenantInvitation>("/account-invitations/", data),
   details: (token: string) => api.get<{ email: string; name: string; phone: string; role: string; expires_at: string }>(`/account-invitations/${encodeURIComponent(token)}/`),
 };
 

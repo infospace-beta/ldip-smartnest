@@ -1,5 +1,6 @@
 "use client";
 
+import SignInOptions from "@/components/SignInOptions";
 import PasswordInput from "@/components/PasswordInput";
 
 import { Suspense, useState, type FormEvent } from "react";
@@ -38,7 +39,7 @@ function LoginFormPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { login, register } = useAuth();
-  const [creatingAccount, setCreatingAccount] = useState(searchParams.get("mode") === "register");
+  const [creatingAccount, setCreatingAccount] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(
@@ -53,6 +54,7 @@ function LoginFormPage() {
     setError("");
     setSuccess("");
     const form = new FormData(event.currentTarget);
+    document.cookie=`sn-trusted=${form.get('trusted')==='on'?'1':'0'}; Path=/; SameSite=Lax${form.get('trusted')==='on'?'; Max-Age=604800':''}`;
     try {
       await login({
         email: String(form.get("email") ?? ""),
@@ -105,9 +107,8 @@ function LoginFormPage() {
   };
 
   const switchMode = () => {
-    setCreatingAccount((current) => !current);
-    setError("");
-    setSuccess("");
+    router.push("/get-started");
+    return;
   };
 
   return (
@@ -173,14 +174,16 @@ function LoginFormPage() {
                 <span>I agree to SmartNest storing the account and contact details needed to manage my tenancy.</span>
               </label>
             )}
+            {!creatingAccount && <label className="consent-row"><input type="checkbox" name="trusted" onChange={e=>{document.cookie=`sn-trusted=${e.target.checked?'1':'0'}; Path=/; SameSite=Lax${e.target.checked?'; Max-Age=604800':''}`;}}/><span>Stay signed in on this trusted device</span></label>}
             <button className="button button-primary auth-submit" type="submit" disabled={loading}>
               {loading ? "Please wait…" : creatingAccount ? "Create account" : "Sign in"}
             </button>
           </form>
+          {!creatingAccount && <SignInOptions />}
           {!creatingAccount && <Link className="forgot-password-link" href="/forgot-password">Forgot your password?</Link>}
           <div className="auth-switch">
             {creatingAccount ? "Already have an account? " : "New to SmartNest? "}
-            <button type="button" onClick={switchMode}>{creatingAccount ? "Sign in" : "Create an account"}</button>
+            <button type="button" onClick={switchMode}>{creatingAccount ? "Sign in" : "Get an invitation"}</button>
           </div>
           <p className="auth-note">Your sign-in and account details are verified by the SmartNest service.</p>
         </section>

@@ -71,6 +71,8 @@ class SupabaseAuthentication(BaseAuthentication):
         invitation_code = metadata.get('account_invitation_token')
         if invitation_code:
             return self.accept_account_invitation(subject, email, metadata, invitation_code)
+        if not metadata.get('invitation_token'):
+            raise AuthenticationFailed('A SmartNest invitation is required. Contact your manager or administrator.')
         # Never link by email or take roles/access flags from editable user_metadata.
         if User.objects.filter(email__iexact=email).exists():
             raise AuthenticationFailed('Ask an administrator to link your existing SmartNest account to Supabase.')
@@ -123,7 +125,14 @@ class SupabaseAuthentication(BaseAuthentication):
                     phone=invitation.phone, role=invitation.role, supabase_user_id=subject,
                     onboarded_by=invitation.created_by if invitation.role != 'manager' else None,
                     registration_consent_at=timezone.now(),
+                    identity_verified_at=timezone.now(),
                 )
+                if invitation.property_id:
+                    if invitation.role=='manager':
+                        invitation.property.owner=user;invitation.property.save(update_fields=['owner'])
+                    else:
+                        user.scope_to_assigned_units=True;user.save(update_fields=['scope_to_assigned_units'])
+                        user.assigned_units.set([invitation.unit_id] if invitation.unit_id else invitation.property.units.all())
                 user.set_unusable_password()
                 user.save(update_fields=['password'])
                 invitation.accepted_at = timezone.now()

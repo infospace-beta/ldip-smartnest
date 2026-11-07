@@ -8,6 +8,7 @@ import Icon from "@/components/Icon";
 
 function TenantCheckIn({ unit, onSaved, onBack }: { unit: Unit; onSaved: () => Promise<void>; onBack: () => void }) {
   const [step, setStep] = useState(1);
+  const [returning, setReturning] = useState(false);
   const [details, setDetails] = useState({ name: "", phone: "", email: "", lease_end: "", rent: unit.rent });
   const [tenant, setTenant] = useState<Tenant | null>(null);
   const [saving, setSaving] = useState(false);
@@ -24,6 +25,7 @@ function TenantCheckIn({ unit, onSaved, onBack }: { unit: Unit; onSaved: () => P
       const file = form.get("evidence_upload");
       const { data } = await unitsAPI.checkIn(unit.property, unit.id, {
         ...details, notes: String(form.get("notes") ?? ""),
+        account_email: returning ? details.email : undefined,
         evidence_upload: file instanceof File && file.size ? file : undefined,
       });
       setTenant(data);
@@ -51,6 +53,7 @@ function TenantCheckIn({ unit, onSaved, onBack }: { unit: Unit; onSaved: () => P
         <label className="field"><span>Tenant full name</span><input required maxLength={200} name="name" value={details.name} onChange={(event) => setDetails({ ...details, name: event.target.value })} /></label>
         <label className="field"><span>Phone number</span><input type="tel" required maxLength={20} name="phone" value={details.phone} onChange={(event) => setDetails({ ...details, phone: event.target.value })} /></label>
         <label className="field"><span>Tenant email</span><input type="email" required maxLength={254} name="email" value={details.email} onChange={(event) => setDetails({ ...details, email: event.target.value })} /></label>
+        <label className="consent-row field-full"><input type="checkbox" checked={returning} onChange={(event) => setReturning(event.target.checked)} /><span>Returning tenant with an existing verified SmartNest account. Link this email after check-in and preserve previous tenancy records.</span></label>
         <label className="field"><span>Lease end date</span><input type="date" required name="lease_end" value={details.lease_end} onChange={(event) => setDetails({ ...details, lease_end: event.target.value })} /></label>
         <label className="field"><span>Monthly rent</span><input required maxLength={50} name="rent" value={details.rent} onChange={(event) => setDetails({ ...details, rent: event.target.value })} /></label>
       </div>
@@ -67,13 +70,13 @@ function TenantCheckIn({ unit, onSaved, onBack }: { unit: Unit; onSaved: () => P
     </form>}
     {step === 3 && tenant && <>
       <div className="auth-message success" role="status">{tenant.name} is checked in. House {unit.unit_number} is now occupied.</div>
-      <h3>Send the registration invitation</h3>
+      {tenant.account_linked ? <p>The existing account is linked. The tenant can sign in with their usual credentials; no new password or registration is needed.</p> : <><h3>Send the registration invitation</h3>
       <InvitationComposer name={tenant.name} defaultEmail={details.email} prepare={async (email) => {
         const { data } = await tenantsAPI.invite(tenant.id, email);
         const url = new URL("/join", window.location.origin);
         url.searchParams.set("token", data.token);
         return url.toString();
-      }} />
+      }} /></>}
     </>}
   </section>;
 }
@@ -99,7 +102,7 @@ export default function PropertiesWorkflow() {
       setError(getApiErrorMessage(requestError, "Could not load properties. Please try again."));
     } finally { setLoading(false); }
   }, []);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void Promise.resolve().then(load); }, [load]);
   const create = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (saving) return;

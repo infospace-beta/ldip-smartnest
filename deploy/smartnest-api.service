@@ -1,0 +1,21 @@
+[Unit]
+Description=SmartNest API
+After=network-online.target
+
+[Service]
+User=smartnest
+Group=smartnest
+WorkingDirectory=/opt/smartnest/backend
+EnvironmentFile=/etc/smartnest/backend.env
+ExecStart=/opt/smartnest/.venv/bin/waitress-serve --listen=127.0.0.1:8000 --trusted-proxy=127.0.0.1 --trusted-proxy-headers=x-forwarded-proto smartnest_api.wsgi:application
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/smartnest
+
+[Install]
+WantedBy=multi-user.target

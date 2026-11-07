@@ -57,7 +57,7 @@ export default function JoinAccountPage() {
     const fullName = String(form.get("name") ?? "").trim();
     const password = String(form.get("password") ?? "");
     if (password !== String(form.get("confirmPassword") ?? "")) {
-      setError("The passwords don’t match.");
+      setError("The passwords donâ€™t match.");
       return;
     }
 
@@ -84,7 +84,7 @@ export default function JoinAccountPage() {
         setError("Check your email to confirm your account, then sign in to accept the invitation. The invitation must still be valid when you sign in.");
       }
     } catch (error) {
-      setError(error instanceof Error ? error.message : "We couldn’t accept this invitation. Confirm the email and try again, or ask your manager for a new link.");
+      setError(error instanceof Error ? error.message : "We couldnâ€™t accept this invitation. Confirm the email and try again, or ask your manager for a new link.");
     } finally {
       setSubmitting(false);
     }
@@ -103,12 +103,12 @@ export default function JoinAccountPage() {
             <h1>Your workspace, ready for you.</h1>
             <p>Accept your invitation to register with the workspace role assigned to you.</p>
           </div>
-          <div className="auth-foot">SmartNest · Invited access</div>
+          <div className="auth-foot">SmartNest Â· Invited access</div>
         </aside>
         <section className="auth-content" aria-live="polite">
           <div className="page-eyebrow"><Icon name="home" />Account invitation</div>
           <h2>Join SmartNest</h2>
-          {confirmationSent ? <div className="auth-message success" role="status">Check your email and confirm your account in this browser, then <Link href="/login">sign in</Link>. The invitation must still be valid when you sign in.</div> : loadingInvite ? <div className="loading-state" role="status">Checking your invitation…</div> : error && !email ? (
+          {confirmationSent ? <div className="auth-message success" role="status">Check your email and confirm your account in this browser, then <Link href="/login">sign in</Link>. The invitation must still be valid when you sign in.</div> : loadingInvite ? <div className="loading-state" role="status">Checking your invitationâ€¦</div> : error && !email ? (
             <div className="auth-message" role="alert">{error}<p><Link href="/login">Go to sign in</Link></p></div>
           ) : (
             <>
@@ -140,7 +140,7 @@ export default function JoinAccountPage() {
                   <span>I agree to SmartNest storing the account and contact details needed to manage my workspace access.</span>
                 </label>
                 <button className="button button-primary auth-submit" type="submit" disabled={submitting}>
-                  {submitting ? "Joining…" : "Accept invitation"}
+                  {submitting ? "Joiningâ€¦" : "Accept invitation"}
                 </button>
               </form>
             </>

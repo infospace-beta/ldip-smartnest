@@ -15,6 +15,7 @@ from .views import SmartNestAuthenticated, staff_unit_ids
 
 
 class CheckInInput(serializers.Serializer):
+    account_email = serializers.EmailField(required=False, allow_blank=True)
     name = serializers.CharField(max_length=200)
     phone = serializers.CharField(max_length=20)
     lease_end = serializers.DateField()
@@ -49,9 +50,15 @@ def check_in_unit(request, pk, unit_pk):
             return Response({'error': 'This unit is already occupied. Refresh the property to continue.'}, status=409)
         if Tenant.objects.filter(unit=unit, status__in=['active', 'expiring']).exists():
             return Response({'error': 'This unit already has an active tenant.'}, status=409)
+        account = None
+        if values.get('account_email'):
+            # Serialize concurrent attempts to attach the same returning account.
+            account = User.objects.select_for_update().filter(email__iexact=values['account_email']).first()
+            account = TenantSerializer().validate_account_email(values['account_email'])
         tenant = Tenant.objects.create(
             property=prop, unit=unit, name=values['name'], phone=values['phone'],
             lease_end=values['lease_end'], rent=values['rent'], status='active',
+            user=account,
         )
         TenancyEvent.objects.create(
             tenant=tenant, unit=unit, action='check_in', recorded_by=request.user,
@@ -61,6 +68,9 @@ def check_in_unit(request, pk, unit_pk):
         unit.tenant = tenant.name
         unit.rent = tenant.rent
         unit.save(update_fields=['status', 'tenant', 'rent'])
+        if account:
+            account.portal_access_granted = True
+            account.save(update_fields=['portal_access_granted'])
         prop.total_units = prop.units.count()
         prop.occupied_units = prop.units.filter(status='occupied').count()
         prop.status = 'leased' if prop.occupied_units else 'vacant'
@@ -69,6 +79,8 @@ def check_in_unit(request, pk, unit_pk):
 
 
 class InvitationInput(serializers.Serializer):
+    property = serializers.PrimaryKeyRelatedField(queryset=Property.objects.all(),required=False,allow_null=True)
+    unit = serializers.PrimaryKeyRelatedField(queryset=Unit.objects.all(),required=False,allow_null=True)
     name = serializers.CharField(max_length=150)
     email = serializers.EmailField()
     phone = serializers.CharField(max_length=20, required=False, allow_blank=True)
@@ -90,6 +102,12 @@ def account_invitations(request):
     serializer.is_valid(raise_exception=True)
     values = serializer.validated_data
     role = values['role']
+    prop=values.get('property');unit=values.get('unit')
+    if unit and (not prop or unit.property_id!=prop.pk):
+        return Response({'error':'Choose a unit within the selected property.'},status=400)
+    if prop and request.user.role=='manager' and prop.owner_id!=request.user.pk:
+        return Response(status=403)
+
     if not ((request.user.role == 'admin' and role == 'manager') or
             (request.user.role == 'manager' and role in ('staff', 'maintenance'))):
         return Response(status=403)
@@ -107,6 +125,8 @@ def account_invitations(request):
                 invitation = AccountInvitation(email=values['email'], role=role, created_by=request.user)
             if not invitation.pk or not invitation.expires_at or invitation.expires_at <= timezone.now():
                 invitation.expires_at = timezone.now() + timedelta(days=7)
+            invitation.property=prop
+            invitation.unit=unit
             invitation.name = values['name']
             invitation.phone = values.get('phone', '')
             token = invitation_token('account', invitation.id, invitation.expires_at)

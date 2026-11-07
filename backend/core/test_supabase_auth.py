@@ -61,13 +61,11 @@ class SupabaseAuthenticationTests(TestCase):
         with self.assertRaises(AuthenticationFailed):
             self.authenticate()
 
-    def test_new_signup_is_always_restricted_tenant(self):
-        self.identity.update(id=str(uuid4()), email='tenant@example.com')
-        self.identity['user_metadata']['consent'] = True
-        user, _ = self.authenticate()
-        self.assertEqual(user.role, 'tenant')
-        self.assertFalse(user.portal_access_granted)
-        self.assertFalse(user.has_usable_password())
+    def test_new_signup_requires_a_server_issued_invitation(self):
+        self.identity.update(id=str(uuid4()),email='tenant@example.com')
+        self.identity['user_metadata']['consent']=True
+        with self.assertRaises(AuthenticationFailed):self.authenticate()
+        self.assertFalse(User.objects.filter(email='tenant@example.com').exists())
 
     def test_unconfirmed_email_is_rejected(self):
         self.identity['email_confirmed_at'] = None

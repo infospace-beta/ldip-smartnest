@@ -1,3 +1,4 @@
+import { sessionCookieSecurity } from "@/lib/supabase/cookie-security";
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { supabaseConfig } from "@/lib/supabase/config";
@@ -11,7 +12,7 @@ export async function proxy(request: NextRequest) {
       setAll(values, headers) {
         values.forEach(({ name, value }) => request.cookies.set(name, value));
         response = NextResponse.next({ request });
-        values.forEach(({ name, value, options }) => response.cookies.set(name, value, options));
+        values.forEach(({ name, value, options }) => response.cookies.set(name, value, {...options,...sessionCookieSecurity(request.nextUrl.protocol === 'https:'),expires:undefined,maxAge:!value?0:request.cookies.get('sn-trusted')?.value==='1'?604800:undefined}));
         Object.entries(headers ?? {}).forEach(([name, value]) => response.headers.set(name, value));
       },
     },
@@ -30,5 +31,5 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/login", "/join", "/forgot-password", "/reset-password", "/auth/:path*"],
+  matcher: ["/dashboard/:path*", "/login", "/join", "/forgot-password", "/reset-password", "/auth/:path*", "/security", "/join-account"],
 };

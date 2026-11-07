@@ -19,8 +19,10 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Expenses", href: "/dashboard/expenses", icon: "expenses", roles: ["manager"], section: "Portfolio" },
   { label: "Maintenance", href: "/dashboard/maintenance", icon: "maintenance", roles: ["manager", "staff", "maintenance", "tenant"], section: "Operations" },
   { label: "Check-in & check-out", href: "/dashboard/tenancy-events", icon: "calendar", roles: ["manager", "staff"], section: "Operations" },
+  { label: "Automations", href: "/dashboard/automations", icon: "settings", roles: ["manager"], section: "Operations" },
+  { label: "Security", href: "/security", icon: "settings", roles: ["admin", "manager", "tenant", "staff", "maintenance"], section: "Account" },
   { label: "Team onboarding", href: "/dashboard/team", icon: "staff", roles: ["manager"], section: "Operations" },
-  { label: "Inspections", href: "/dashboard/unit-inspections", icon: "inspections", roles: ["manager", "staff"], section: "Operations" },
+  { label: "Inspections", href: "/dashboard/unit-inspections", icon: "inspections", roles: ["manager", "staff", "tenant"], section: "Operations" },
   { label: "Notices", href: "/dashboard/notices", icon: "notices", roles: ["admin", "manager", "staff", "tenant", "maintenance"], section: "Operations" },
   { label: "Communications", href: "/dashboard/messages", icon: "notices", roles: ["admin", "manager", "staff", "tenant", "maintenance"], section: "Communications" },
   { label: "Users & access", href: "/dashboard/staff", icon: "staff", roles: ["admin"], section: "Administration" },
@@ -57,7 +59,8 @@ function DashboardShell({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) router.replace("/login");
-  }, [isAuthenticated, isLoading, router]);
+    else if (!isLoading && user?.requires_mfa) router.replace("/security");
+  }, [isAuthenticated, isLoading, router, user?.requires_mfa]);
 
   useEffect(() => {
     if (!isLoading && isAuthenticated && currentItem && !currentItem.roles.includes(role)) router.replace("/dashboard");
@@ -93,7 +96,7 @@ function DashboardShell({ children }: { children: ReactNode }) {
     </Link>
   ));
 
-  if (isLoading || !isAuthenticated || (currentItem && !currentItem.roles.includes(role))) {
+  if (isLoading || !isAuthenticated || user?.requires_mfa || (currentItem && !currentItem.roles.includes(role))) {
     return <div className="loading-state" role="status">Preparing your workspace…</div>;
   }
 
@@ -103,6 +106,7 @@ function DashboardShell({ children }: { children: ReactNode }) {
         <section className="auth-content" aria-live="polite">
           <h1>Your account is signed in</h1>
           <p>Your property manager must link your tenancy before your workspace becomes available.</p>
+          <p><Link href="/inspection-reports">View your inspection reports and check-out charge reviews</Link></p>
           <p>Give your manager your account email: <strong>{user.email}</strong>. You do not need to register again.</p>
           {accessError && <p role="alert">{accessError}</p>}
           <button className="button button-primary" disabled={checkingAccess} onClick={async () => {

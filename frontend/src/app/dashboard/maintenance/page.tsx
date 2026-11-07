@@ -1,7 +1,2 @@
-"use client";
-
-import { MaintenancePage } from "@/components/WorkspacePages";
-
-export default function MaintenanceRoute() {
-  return <MaintenancePage />;
-}
+import Component from "@/components/MaintenanceWorkflow";
+export default Component;

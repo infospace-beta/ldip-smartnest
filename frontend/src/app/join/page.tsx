@@ -57,7 +57,7 @@ export default function JoinTenantPage() {
     const fullName = String(form.get("name") ?? "").trim();
     const password = String(form.get("password") ?? "");
     if (password !== String(form.get("confirmPassword") ?? "")) {
-      setError("The passwords don’t match.");
+      setError("The passwords donâ€™t match.");
       return;
     }
 
@@ -84,7 +84,7 @@ export default function JoinTenantPage() {
         setError("Check your email to confirm your account, then sign in to accept the invitation. The invitation must still be valid when you sign in.");
       }
     } catch (error) {
-      setError(error instanceof Error ? error.message : "We couldn’t accept this invitation. Confirm the email and try again, or ask your manager for a new link.");
+      setError(error instanceof Error ? error.message : "We couldnâ€™t accept this invitation. Confirm the email and try again, or ask your manager for a new link.");
     } finally {
       setSubmitting(false);
     }
@@ -101,14 +101,14 @@ export default function JoinTenantPage() {
           <div className="auth-story-copy">
             <div className="page-eyebrow">Tenant portal</div>
             <h1>Your home, all in one place.</h1>
-            <p>Accept your manager’s invitation to access your tenancy, payments, and maintenance requests.</p>
+            <p>Accept your managerâ€™s invitation to access your tenancy, payments, and maintenance requests.</p>
           </div>
-          <div className="auth-foot">SmartNest · Tenant access</div>
+          <div className="auth-foot">SmartNest Â· Tenant access</div>
         </aside>
         <section className="auth-content" aria-live="polite">
           <div className="page-eyebrow"><Icon name="home" />Tenant invitation</div>
           <h2>Join SmartNest</h2>
-          {confirmationSent ? <div className="auth-message success" role="status">Check your email and confirm your account in this browser, then <Link href="/login">sign in</Link>. The invitation must still be valid when you sign in.</div> : loadingInvite ? <div className="loading-state" role="status">Checking your invitation…</div> : error && !email ? (
+          {confirmationSent ? <div className="auth-message success" role="status">Check your email and confirm your account in this browser, then <Link href="/login">sign in</Link>. The invitation must still be valid when you sign in.</div> : loadingInvite ? <div className="loading-state" role="status">Checking your invitationâ€¦</div> : error && !email ? (
             <div className="auth-message" role="alert">{error}<p><Link href="/login">Go to sign in</Link></p></div>
           ) : (
             <>
@@ -137,10 +137,10 @@ export default function JoinTenantPage() {
                 </div>
                 <label className="consent-row">
                   <input name="consent" type="checkbox" required />
-                  <span>I agree to SmartNest storing the account and contact details needed to manage my tenancy.</span>
+                  <span>I have read the <Link href="/privacy" target="_blank">privacy notice</Link> and <Link href="/terms" target="_blank">terms of use</Link> for my account and tenancy.</span>
                 </label>
                 <button className="button button-primary auth-submit" type="submit" disabled={submitting}>
-                  {submitting ? "Joining…" : "Accept invitation"}
+                  {submitting ? "Joiningâ€¦" : "Accept invitation"}
                 </button>
               </form>
             </>

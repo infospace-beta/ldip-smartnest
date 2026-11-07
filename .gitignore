@@ -37,6 +37,12 @@ env/
 .venv
 
 # Django
+backend/profile-photos/
+backend/tenancy-events/
+backend/.automation-heartbeat*
+backend/.runtime/
+*.snbackup
+*recovery-secrets.json
 *.db
 *.sqlite3
 /media/

@@ -12,11 +12,11 @@ For an existing account, first create/confirm its Auth identity in the Supabase 
 python manage.py link_supabase_user person@example.com <verified-supabase-user-uuid>
 ```
 
-This explicit administrative step preserves the user's Django role, tenant linkage and portfolio assignments. It refuses to overwrite an existing different link. Never link identities solely because an untrusted requester supplies a matching email. Team onboarding continues to create local permission records; create/confirm and link the corresponding Supabase identities before those team members sign in. No service-role key is needed in the app.
+This explicit administrative step preserves the user's Django role, tenant linkage and portfolio assignments. It refuses to overwrite an existing different link. Never link identities solely because an untrusted requester supplies a matching email. Team onboarding uses approved account invitations; manual role controls remain available to administrators. No service-role key is needed in the app.
 
-New public signups must confirm their email. Their first API request creates a tenant account with portal access disabled, unless a valid invitation links their tenancy. User-editable signup metadata cannot select a privileged role. The existing manager workflow grants access after linking the tenancy.
+All new accounts require an approved invitation. Tenant invitations are accepted only after check-in and email confirmation in Supabase. Public tokenless legacy signup is rejected. Email-only tenancy linking cannot grant access to historical unverified pending accounts. Production requires Supabase with privileged MFA; the legacy mode remains only for isolated compatibility/testing. Verified Supabase linking invalidates the old local password.
 
-Set `SUPABASE_AUTH_ENABLED=false` only to run an intentionally separate legacy deployment. The frontend added here uses Supabase exclusively. Tests use isolated SQLite settings and explicitly select the legacy provider for existing regression tests; `core.test_supabase_auth` tests Supabase verification and identity mapping.
+Set DB_NAME, DB_USER, DB_PASSWORD, DB_HOST and DB_PORT in the ignored local environment; database credentials are no longer in source. For public deployment use the production configuration example and [production runbook](../docs/PRODUCTION_SECURITY.md), including private storage, separate notice encryption keys, supervised services, backup/restore, monitoring and legal release requirements.
 
 Run these commands from `backend`:
 
@@ -48,11 +48,11 @@ For real email delivery, configure these environment variables in the backend de
 - `DEFAULT_FROM_EMAIL`
 - `FRONTEND_URL` (the public HTTPS origin of the frontend)
 
-Do not commit email credentials. In production, set `DEBUG=false` and explicitly configure the frontend origin and email provider.
+Do not commit email credentials. In production, set `DJANGO_ENV=production` and follow the production runbook. Supabase sends account recovery email when Supabase Auth is enabled.
 
 After applying the property ownership migration, an administrator assigns existing properties to managers from **Users & access**. Newly created properties belong to the manager who creates them.
 
-Managers can create or regenerate a seven-day tenant invitation link from a tenant profile. Staff can do this for tenants within the portfolio of the manager who onboarded them, plus any units an administrator assigns directly. Share the link using a trusted channel; generating a replacement invalidates the previous link.
+Managers can create or regenerate a seven-day tenant invitation link from a tenant profile. Staff can do this for tenants within the portfolio of the manager who onboarded them, plus any units an administrator assigns directly. Share the link using a trusted channel. Repeated preparation reuses a still-valid invitation; expired invitations can be renewed.
 
 Staff accounts inherit the properties owned by the manager who created them, so onboarding does not require manual unit assignment. Staff can work with tenants, leases, inspections, move events, and maintenance for that scope, but payments and expenses remain manager-only. Maintenance accounts only receive work orders assigned to them and see the contact details needed to complete those jobs.
 

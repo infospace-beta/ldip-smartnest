@@ -1,5 +1,6 @@
 "use client";
 
+import AccessibleDialog from "@/components/AccessibleDialog";
 import PasswordInput from "@/components/PasswordInput";
 import AccountInvitationForm from "@/components/AccountInvitationForm";
 import InvitationComposer from "@/components/InvitationComposer";
@@ -21,7 +22,6 @@ import {
   paymentsAPI,
   propertiesAPI,
   staffAPI,
-  teamAPI,
   tenancyEventsAPI,
   tenantsAPI,
   unitInspectionsAPI,
@@ -118,7 +118,7 @@ const propertyForm: CreateForm = {
     { name: "total_units", label: "Total units", type: "number", required: true },
     { name: "monthly_rent", label: "Typical monthly rent", placeholder: "KSh 24,000" },
     { name: "tag", label: "Property type", placeholder: "Residential" },
-    { name: "photo_url", label: "Photo URL", type: "url", full: true, placeholder: "https://…" },
+    { name: "photo_url", label: "Photo URL", type: "url", full: true, placeholder: "https://â€¦" },
   ],
   create: (values) => propertiesAPI.create({ ...values, total_units: numberValue(values, "total_units") }),
 };
@@ -145,8 +145,8 @@ const tenantForm: CreateForm = {
   fields: [
     { name: "name", label: "Full name", required: true },
     { name: "phone", label: "Phone number", type: "tel", required: true },
-    { name: "account_email", label: "Existing tenant account email", type: "email", placeholder: "Optional · links an existing tenant login" },
-    { name: "invite_email", label: "Tenant email for an invite link", type: "email", placeholder: "Optional · send them a portal invitation" },
+    { name: "account_email", label: "Existing tenant account email", type: "email", placeholder: "Optional Â· links an existing tenant login" },
+    { name: "invite_email", label: "Tenant email for an invite link", type: "email", placeholder: "Optional Â· send them a portal invitation" },
     { name: "property", label: "Property", type: "select", required: true, options: (refs) => listOptions(refs, "properties", "name") },
     { name: "unit", label: "Unit", type: "select", options: (refs) => listOptions(refs, "units", "unit_number") },
     { name: "lease_end", label: "Lease end date", type: "date", required: true },
@@ -382,14 +382,14 @@ const PAGE_CONFIGS: Record<string, PageConfig> = {
 };
 
 function displayValue(value: unknown, key?: string) {
-  if (value === null || value === undefined || value === "") return "—";
-  if (Array.isArray(value)) return value.length ? value.join(", ") : "—";
+  if (value === null || value === undefined || value === "") return "â€”";
+  if (Array.isArray(value)) return value.length ? value.join(", ") : "â€”";
   if (typeof value === "boolean" && key === "account_linked") return value ? "Linked" : "Not linked";
   if (typeof value === "object") {
     return Object.entries(value as Record<string, unknown>)
       .filter(([, item]) => item !== "" && item !== null && item !== undefined)
       .map(([itemKey, item]) => `${itemKey.replaceAll("_", " ")}: ${String(item).replaceAll("_", " ")}`)
-      .join(" · ") || "—";
+      .join(" Â· ") || "â€”";
   }
   if (["date", "lease_end", "created_at", "inspection_date"].includes(key ?? "") && typeof value === "string") {
     const date = new Date(value);
@@ -451,7 +451,7 @@ function PublicProfileDialog({
 
   return (
     <div className="profile-overlay" role="presentation" onClick={onClose}>
-      <section className="panel tenant-profile-dialog public-profile-dialog" role="dialog" aria-modal="true" aria-labelledby="public-profile-title" onClick={(event) => event.stopPropagation()}>
+      <AccessibleDialog onClose={onClose} className="panel tenant-profile-dialog public-profile-dialog" aria-modal="true" aria-labelledby="public-profile-title" onClick={(event) => event.stopPropagation()}>
         <button className="button button-secondary button-compact tenant-profile-close" type="button" onClick={onClose}>Close</button>
         <div className="tenant-profile-heading">
           <UserAvatar userId={userId} hasAvatar={profile?.has_avatar ?? hasAvatar} name={profile?.username ?? name} className="profile-avatar" />
@@ -462,7 +462,7 @@ function PublicProfileDialog({
           </div>
         </div>
         {error ? <div className="error-state" role="alert">{error}</div> : !profile ? (
-          <div className="loading-state" role="status">Loading profile…</div>
+          <div className="loading-state" role="status">Loading profileâ€¦</div>
         ) : (
           <dl className="tenant-profile-details">
             <div><dt>Phone</dt><dd>{profile.phone ? <a href={`tel:${profile.phone}`}>{profile.phone}</a> : "Not provided"}</dd></div>
@@ -476,7 +476,7 @@ function PublicProfileDialog({
           </div>
         )}
         <p className="panel-description">Only the contact details this person shares for property operations are shown here.</p>
-      </section>
+      </AccessibleDialog>
     </div>
   );
 }
@@ -585,7 +585,7 @@ function RecordForm({ form, references, onSaved }: { form: CreateForm; reference
             {error && <div className="form-error" role="alert">{error}</div>}
             <div className="form-actions">
               <button className="button button-secondary button-compact" type="button" onClick={() => setOpen(false)}>Close</button>
-              <button className="button button-primary" type="submit" disabled={saving}>{saving ? "Saving…" : form.submitLabel}</button>
+              <button className="button button-primary" type="submit" disabled={saving}>{saving ? "Savingâ€¦" : form.submitLabel}</button>
             </div>
           </form>
         </section>
@@ -646,7 +646,7 @@ function VendorWorkOrderForm({
         <label className="field"><span>Quote details</span><textarea name="quote_notes" rows={2} defaultValue={quoteNotes} /></label>
         <label className="field"><span>Completion photo URL</span><input name="confirmation_photo_url" type="url" defaultValue={confirmationPhotoUrl} placeholder="Required to complete work" /></label>
         {error && <span className="form-error" role="alert">{error}</span>}
-        <button className="button button-primary" type="submit" disabled={saving}>{saving ? "Saving…" : "Save update"}</button>
+        <button className="button button-primary" type="submit" disabled={saving}>{saving ? "Savingâ€¦" : "Save update"}</button>
       </form>}
     </div>
   );
@@ -677,15 +677,15 @@ function MaintenancePhotoButton({ jobId, label = "View damage photo" }: { jobId:
   return (
     <>
       <button className="button button-secondary button-compact" type="button" onClick={() => void openPhoto()} disabled={loading}>
-        <Icon name="inspections" />{loading ? "Loading…" : label}
+        <Icon name="inspections" />{loading ? "Loadingâ€¦" : label}
       </button>
       {error && <span className="form-error" role="alert">{error}</span>}
       {photoUrl && (
         <div className="evidence-overlay" role="presentation" onClick={() => setPhotoUrl("")}>
-          <section className="evidence-dialog" role="dialog" aria-modal="true" aria-label="Maintenance damage photo" onClick={(event) => event.stopPropagation()}>
+          <AccessibleDialog onClose={() => setPhotoUrl("")} className="evidence-dialog" aria-label="Maintenance damage photo" onClick={(event) => event.stopPropagation()}>
             <button className="button button-secondary" type="button" onClick={() => setPhotoUrl("")}>Close photo</button>
             <Image src={photoUrl} alt="Reported maintenance damage" width={1200} height={900} unoptimized />
-          </section>
+          </AccessibleDialog>
         </div>
       )}
     </>
@@ -757,9 +757,9 @@ function MaintenanceRequestPanel({ onSaved }: { onSaved: () => Promise<void> }) 
           <div className="field">
             <label htmlFor="maintenance-priority">How urgent is it?</label>
             <select id="maintenance-priority" value={priority} onChange={(event) => setPriority(event.target.value)}>
-              <option value="low">Low — can wait for a scheduled visit</option>
-              <option value="medium">Medium — needs attention soon</option>
-              <option value="high">High — urgent or unsafe</option>
+              <option value="low">Low â€” can wait for a scheduled visit</option>
+              <option value="medium">Medium â€” needs attention soon</option>
+              <option value="high">High â€” urgent or unsafe</option>
             </select>
           </div>
           <div className="field">
@@ -773,7 +773,7 @@ function MaintenanceRequestPanel({ onSaved }: { onSaved: () => Promise<void> }) 
         {success && <div className="hint-card" role="status"><strong>Request submitted</strong>{success}</div>}
         <div className="form-actions">
           <button className="button button-primary" type="submit" disabled={saving || !issue.trim()}>
-            <Icon name="arrow" />{saving ? "Sending…" : "Send request for approval"}
+            <Icon name="arrow" />{saving ? "Sendingâ€¦" : "Send request for approval"}
           </button>
         </div>
       </form>
@@ -814,7 +814,7 @@ function MaintenanceApprovalCard({
         <div>
           <div className="page-eyebrow"><Icon name="maintenance" />Awaiting your approval</div>
           <h3>{job.issue}</h3>
-          <p className="panel-description">{job.job_id} · {new Date(job.date).toLocaleDateString()} · {job.property_name}{job.unit_number ? ` · Unit ${job.unit_number}` : ""}</p>
+          <p className="panel-description">{job.job_id} Â· {new Date(job.date).toLocaleDateString()} Â· {job.property_name}{job.unit_number ? ` Â· Unit ${job.unit_number}` : ""}</p>
         </div>
         <div className="maintenance-badges">
           <span className={`status-pill ${statusClass("priority", job.priority)}`}>{job.priority} priority</span>
@@ -829,7 +829,7 @@ function MaintenanceApprovalCard({
       {!assignees.length && <p className="field-hint">No service account is linked yet. The request can be approved and the manager can arrange a service contact later.</p>}
       {error && <div className="form-error" role="alert">{error}</div>}
       <div className="form-actions">
-        <button className="button button-primary" type="button" onClick={() => void approve()} disabled={saving}><Icon name="check" />{saving ? "Approving…" : "Approve request"}</button>
+        <button className="button button-primary" type="button" onClick={() => void approve()} disabled={saving}><Icon name="check" />{saving ? "Approvingâ€¦" : "Approve request"}</button>
       </div>
     </article>
   );
@@ -850,7 +850,7 @@ function TenantMaintenanceHistory({ jobs, onViewProfile }: { jobs: MaintenanceJo
                 <span className={`status-pill ${statusClass("priority", job.priority)}`}>{job.priority} priority</span>
               </div>
               <h3>{job.issue}</h3>
-              <p className="panel-description">{job.job_id} · {new Date(job.date).toLocaleDateString()} · {job.property_name}{job.unit_number ? ` · Unit ${job.unit_number}` : ""}</p>
+              <p className="panel-description">{job.job_id} Â· {new Date(job.date).toLocaleDateString()} Â· {job.property_name}{job.unit_number ? ` Â· Unit ${job.unit_number}` : ""}</p>
             </div>
             {job.has_damage_photo && <MaintenancePhotoButton jobId={job.id} />}
           </div>
@@ -860,7 +860,7 @@ function TenantMaintenanceHistory({ jobs, onViewProfile }: { jobs: MaintenanceJo
           {(job.assigned_to_name || job.status === "assigned" || job.status === "in_progress" || job.status === "completed") && (
             <div className="maintenance-service-row">
               <UserAvatar userId={job.assigned_to ?? undefined} hasAvatar={job.assigned_to_has_avatar} name={job.assigned_to_name || job.assignee} className="user-avatar" />
-              <div><strong>{job.assigned_to_name || job.assignee}</strong><small>Service team{job.approved_by_name ? ` · approved by ${job.approved_by_name}` : ""}</small></div>
+              <div><strong>{job.assigned_to_name || job.assignee}</strong><small>Service team{job.approved_by_name ? ` Â· approved by ${job.approved_by_name}` : ""}</small></div>
               {job.assigned_to && <button className="profile-trigger" type="button" onClick={() => onViewProfile(job.assigned_to!, job.assigned_to_name || job.assignee, job.assigned_to_has_avatar)}>View profile</button>}
               {job.assigned_to && <Link className="button button-primary button-compact" href={`/dashboard/messages?recipient=${job.assigned_to}`}><Icon name="message" />Message service</Link>}
             </div>
@@ -888,7 +888,7 @@ function ServiceMaintenanceHistory({ jobs, onSaved, onViewProfile }: { jobs: Mai
                 <span className={`status-pill ${statusClass("priority", job.priority)}`}>{job.priority} priority</span>
               </div>
               <h3>{job.issue}</h3>
-              <p className="panel-description">{job.job_id} · {new Date(job.date).toLocaleDateString()} · {job.property_name}{job.unit_number ? ` · Unit ${job.unit_number}` : ""}</p>
+              <p className="panel-description">{job.job_id} Â· {new Date(job.date).toLocaleDateString()} Â· {job.property_name}{job.unit_number ? ` Â· Unit ${job.unit_number}` : ""}</p>
             </div>
             {job.has_damage_photo && <MaintenancePhotoButton jobId={job.id} />}
           </div>
@@ -938,7 +938,7 @@ function MaintenanceAssignment({ job, assignees, onSaved }: {
         <option value="">Unassigned</option>
         {assignees.map((provider) => <option key={provider.id} value={provider.id}>{provider.username}</option>)}
       </select>
-      <button className="button button-secondary button-compact" type="submit" disabled={saving}>{saving ? "Saving…" : "Save provider"}</button>
+      <button className="button button-secondary button-compact" type="submit" disabled={saving}>{saving ? "Savingâ€¦" : "Save provider"}</button>
       {error && <p role="alert">{error}</p>}
     </form>
   );
@@ -1013,7 +1013,7 @@ export function MaintenancePage() {
         actions={isManagerial ? <RecordForm form={maintenanceForm} references={references} onSaved={load} /> : undefined}
       />
       {error && <div className="error-state" role="alert"><span>{error}</span><button className="button button-secondary" type="button" onClick={() => void load()}>Try again</button></div>}
-      {loading ? <div className="loading-state" role="status">Loading maintenance requests…</div> : !error && (
+      {loading ? <div className="loading-state" role="status">Loading maintenance requestsâ€¦</div> : !error && (
         <>
           <div className="metric-grid">
             <Metric label={role === "tenant" ? "Your requests" : "Pending approval"} value={role === "tenant" ? jobs.length : pendingJobs.length} note={role === "tenant" ? "Submitted by your account" : "Tenant requests waiting for you"} icon="maintenance" />
@@ -1056,7 +1056,7 @@ export function MaintenancePage() {
                             </span>
                             {job.reported_by_user_id && <Link className="button button-secondary button-compact" href={`/dashboard/messages?recipient=${job.reported_by_user_id}`}><Icon name="message" />Message</Link>}
                           </td>
-                          <td>{job.property_name}{job.unit_number ? ` · ${job.unit_number}` : ""}</td>
+                          <td>{job.property_name}{job.unit_number ? ` Â· ${job.unit_number}` : ""}</td>
                           <td><span className={`status-pill ${statusClass("priority", job.priority)}`}>{job.priority}</span></td>
                           <td><span className={`status-pill ${statusClass("status", job.status)}`}>{job.status.replaceAll("_", " ")}</span></td>
                           <td>
@@ -1150,10 +1150,10 @@ export function RecordsPage({ page }: { page: string }) {
       <section className="panel">
         <div className="toolbar">
           <div><h2 className="panel-title">{config.title} directory</h2><p className="panel-description">{rows.length} record{rows.length === 1 ? "" : "s"} returned by the backend.</p></div>
-          <label className="search-field"><Icon name="search" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={`Search ${config.title.toLowerCase()}…`} aria-label={`Search ${config.title}`} /></label>
+          <label className="search-field"><Icon name="search" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={`Search ${config.title.toLowerCase()}â€¦`} aria-label={`Search ${config.title}`} /></label>
         </div>
         {error && <div className="error-state" role="alert"><span>{error}</span><button className="button button-secondary" type="button" onClick={() => void load()}>Try again</button></div>}
-        {loading ? <div className="loading-state" role="status">Loading records…</div> : !error && filteredRows.length === 0 ? (
+        {loading ? <div className="loading-state" role="status">Loading recordsâ€¦</div> : !error && filteredRows.length === 0 ? (
           <div className="empty-state"><strong>{rows.length ? "No matching records" : "Nothing here yet"}</strong>{rows.length ? "Try changing the search or filter." : canWrite ? "Add a record to get this workspace started." : "Records will appear here when the service has data."}</div>
         ) : !error ? (
           <div className="table-wrap">
@@ -1210,7 +1210,7 @@ export function RecordsPage({ page }: { page: string }) {
       </section>
       {page === "tenants" && selectedTenant && (
         <div className="profile-overlay" role="presentation" onClick={() => setSelectedTenant(null)}>
-          <section className="panel tenant-profile-dialog" role="dialog" aria-modal="true" aria-labelledby="tenant-profile-title" onClick={(event) => event.stopPropagation()}>
+          <AccessibleDialog onClose={() => setSelectedTenant(null)} className="panel tenant-profile-dialog" aria-modal="true" aria-labelledby="tenant-profile-title" onClick={(event) => event.stopPropagation()}>
             <button className="button button-secondary button-compact tenant-profile-close" type="button" onClick={() => setSelectedTenant(null)}>Close</button>
             <div className="tenant-profile-heading">
               <UserAvatar
@@ -1219,11 +1219,11 @@ export function RecordsPage({ page }: { page: string }) {
                 name={String(selectedTenant.name ?? "Tenant")}
                 className="profile-avatar"
               />
-              <div><div className="page-eyebrow">Tenant profile</div><h2 id="tenant-profile-title">{String(selectedTenant.name ?? "Tenant")}</h2><p>{String(selectedTenant.property_name ?? "Property")} · {String(selectedTenant.unit_number ?? "No unit assigned")}</p></div>
+              <div><div className="page-eyebrow">Tenant profile</div><h2 id="tenant-profile-title">{String(selectedTenant.name ?? "Tenant")}</h2><p>{String(selectedTenant.property_name ?? "Property")} Â· {String(selectedTenant.unit_number ?? "No unit assigned")}</p></div>
             </div>
             <dl className="tenant-profile-details">
-              <div><dt>Phone</dt><dd>{String(selectedTenant.phone ?? "—")}</dd></div>
-              <div><dt>Lease status</dt><dd>{String(selectedTenant.status ?? "—").replaceAll("_", " ")}</dd></div>
+              <div><dt>Phone</dt><dd>{String(selectedTenant.phone ?? "â€”")}</dd></div>
+              <div><dt>Lease status</dt><dd>{String(selectedTenant.status ?? "â€”").replaceAll("_", " ")}</dd></div>
               <div><dt>Lease ends</dt><dd>{displayValue(selectedTenant.lease_end, "lease_end")}</dd></div>
               <div><dt>Monthly rent</dt><dd>{displayValue(selectedTenant.rent, "rent")}</dd></div>
               <div><dt>Portal account</dt><dd>{selectedTenant.account_linked ? "Linked" : "Not linked"}</dd></div>
@@ -1246,10 +1246,10 @@ export function RecordsPage({ page }: { page: string }) {
                   const url = new URL("/join", window.location.origin);
                   url.searchParams.set("token", data.token);
                   return url.toString();
-                }} /> : <p className="panel-description">Complete this tenant’s check-in before preparing their registration invitation.</p>}
+                }} /> : <p className="panel-description">Complete this tenantâ€™s check-in before preparing their registration invitation.</p>}
               </div>
             )}
-          </section>
+          </AccessibleDialog>
         </div>
       )}
       {selectedProfile && (
@@ -1290,12 +1290,12 @@ function UserAccessRow({
       await usersAPI.update(user.id, {
         role,
         is_active_user: active,
-        assigned_units: role === "staff" ? assignedUnits.map(Number) : [],
+        assigned_units: ["staff", "maintenance"].includes(role) ? assignedUnits.map(Number) : [],
         managed_properties: role === "manager" ? managedProperties.map(Number) : [],
       });
       await onSaved();
     } catch {
-      setError("Could not save this user’s access. Check the assignments and try again.");
+      setError("Could not save this userâ€™s access. Check the assignments and try again.");
     } finally {
       setSaving(false);
     }
@@ -1316,11 +1316,11 @@ function UserAccessRow({
           ))}
         </select>
       </label>
-      {role === "staff" && (
+      {["staff", "maintenance"].includes(role) && (
         <label className="access-field access-assignment">
           <span>Assigned units</span>
           <select multiple value={assignedUnits} onChange={(event) => setAssignedUnits(Array.from(event.currentTarget.selectedOptions, (option) => option.value))}>
-            {options.units.map((unit) => <option value={String(unit.id)} key={unit.id}>{unit.property_name} · {unit.unit_number}</option>)}
+            {options.units.map((unit) => <option value={String(unit.id)} key={unit.id}>{unit.property_name} Â· {unit.unit_number}</option>)}
           </select>
         </label>
       )}
@@ -1328,7 +1328,7 @@ function UserAccessRow({
         <label className="access-field access-assignment">
           <span>Properties this manager owns</span>
           <select multiple value={managedProperties} onChange={(event) => setManagedProperties(Array.from(event.currentTarget.selectedOptions, (option) => option.value))}>
-            {options.properties.map((property) => <option value={String(property.id)} key={property.id}>{property.name}{property.owner_id && property.owner_id !== user.id ? " · reassigned" : ""}</option>)}
+            {options.properties.map((property) => <option value={String(property.id)} key={property.id}>{property.name}{property.owner_id && property.owner_id !== user.id ? " Â· reassigned" : ""}</option>)}
           </select>
         </label>
       )}
@@ -1337,7 +1337,7 @@ function UserAccessRow({
         Active
       </label>
       <div className="access-save">
-        <button className="button button-primary" type="submit" disabled={saving}>{saving ? "Saving…" : "Save access"}</button>
+        <button className="button button-primary" type="submit" disabled={saving}>{saving ? "Savingâ€¦" : "Save access"}</button>
         {error && <span className="form-error" role="alert">{error}</span>}
       </div>
     </form>
@@ -1388,10 +1388,10 @@ export function UserAccessPage() {
       <div className="hint-card"><strong>Staff access</strong>Staff inherit the portfolio of the manager who onboarded them. Assigning units here adds a direct override for staff who were created before manager onboarding, while maintenance accounts only need work-order assignments.</div>
       <div className="hint-card"><strong>Property ownership</strong>Assign each managed property to its manager here. Managers only see records connected to their assigned properties; unassigned legacy properties remain visible to administrators until assigned.</div>
       {error && <div className="error-state" role="alert"><span>{error}</span><button className="button button-secondary" type="button" onClick={() => void load()}>Try again</button></div>}
-      {loading ? <div className="loading-state" role="status">Loading user registry…</div> : !error && (
+      {loading ? <div className="loading-state" role="status">Loading user registryâ€¦</div> : !error && (
         <section className="panel user-access-panel">
           <div className="panel-heading">
-            <div><h2 className="panel-title">Registered accounts</h2><p className="panel-description">{users.length} account{users.length === 1 ? "" : "s"} · private conversations are not shown in this registry.</p></div>
+            <div><h2 className="panel-title">Registered accounts</h2><p className="panel-description">{users.length} account{users.length === 1 ? "" : "s"} Â· private conversations are not shown in this registry.</p></div>
           </div>
           {users.length ? users.map((item) => <UserAccessRow user={item} options={options} onSaved={load} key={item.id} />) : <div className="empty-state"><strong>No accounts yet</strong>New sign-ups will appear here for role provisioning.</div>}
         </section>
@@ -1401,83 +1401,7 @@ export function UserAccessPage() {
 }
 
 export function TeamOnboardingPage() {
-  const [role, setRole] = useState<"staff" | "maintenance">("staff");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
-
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const formElement = event.currentTarget;
-    setSaving(true);
-    setError("");
-    setSuccess("");
-    const form = new FormData(formElement);
-    try {
-      const { data } = await teamAPI.onboard({
-        username: String(form.get("username") ?? "").trim(),
-        email: String(form.get("email") ?? "").trim(),
-        password: String(form.get("password") ?? ""),
-        phone: String(form.get("phone") ?? "").trim(),
-        role,
-      });
-      formElement.reset();
-      setSuccess(`${data.username} has been added as ${role === "staff" ? "staff" : "maintenance"}. Share the initial password with them securely.`);
-    } catch {
-      setError("Could not onboard this team member. Check that the email, username, phone, and password are valid.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <section>
-      <PageHeader
-        title="Onboard your team"
-        eyebrow="Manager workspace"
-        description="Create staff and maintenance accounts for the properties you manage. Tenant records can be added under Tenants & leases."
-        icon="staff"
-      />
-      <div className="hint-card">
-        <strong>What new team members can see</strong>
-        Staff inherit your property portfolio and can work with the tenants, leases, inspections, and work orders connected to your properties. Maintenance accounts only see work orders assigned to them, with the contact details needed to complete each job.
-      </div>
-      {error && <div className="error-state" role="alert">{error}</div>}
-      {success && <div className="auth-message success" role="status">{success}</div>}
-      <AccountInvitationForm />
-      <section className="panel form-panel">
-        <div className="panel-heading"><div><h2 className="panel-title">New team account</h2><p className="panel-description">The manager creates the account and sets its initial password.</p></div></div>
-        <form onSubmit={submit}>
-            <div className="form-grid">
-              <label className="field">
-                <span>Role</span>
-                <select value={role} onChange={(event) => setRole(event.target.value as "staff" | "maintenance")}>
-                  <option value="staff">Staff</option>
-                  <option value="maintenance">Maintenance</option>
-                </select>
-              </label>
-              <label className="field">
-                <span>Full name</span>
-                <input name="username" required maxLength={150} autoComplete="name" />
-              </label>
-              <label className="field">
-                <span>Email address</span>
-                <input name="email" type="email" required maxLength={254} autoComplete="email" />
-              </label>
-              <label className="field">
-                <span>Phone number</span>
-                <input name="phone" type="tel" maxLength={20} autoComplete="tel" />
-              </label>
-              <label className="field">
-                <span>Initial password</span>
-                <PasswordInput name="password" required minLength={8} autoComplete="new-password" />
-              </label>
-            </div>
-            <div className="form-actions"><button className="button button-primary" type="submit" disabled={saving}>{saving ? "Creating account…" : "Create account"}</button></div>
-        </form>
-      </section>
-    </section>
-  );
+  return <section><PageHeader title="Invite your team" eyebrow="Manager workspace" description="Invite staff and service providers with an approved role. Each person sets their own password." icon="staff"/><AccountInvitationForm /></section>;
 }
 
 export function CommunicationsPage() {
@@ -1592,7 +1516,7 @@ export function CommunicationsPage() {
       <div className="communication-grid">
         <aside className="panel conversation-list">
           <h2 className="panel-title">Inbox</h2>
-          {loading ? <div className="loading-state" role="status">Loading…</div> : conversations.length ? conversations.map((item) => {
+          {loading ? <div className="loading-state" role="status">Loadingâ€¦</div> : conversations.length ? conversations.map((item) => {
             const participant = item.participants.find((entry) => entry.id !== user?.id);
             return (
               <div className="conversation-item" key={item.id}>
@@ -1601,7 +1525,7 @@ export function CommunicationsPage() {
                   <span>{item.subject}</span>
                   <small>{item.last_message_preview}</small>
                 </button>
-                {participant && <button className="profile-trigger conversation-profile-link" type="button" onClick={() => setSelectedProfile({ userId: participant.id, name: participant.username, hasAvatar: participant.has_avatar })}>View {participant.username}’s profile</button>}
+                {participant && <button className="profile-trigger conversation-profile-link" type="button" onClick={() => setSelectedProfile({ userId: participant.id, name: participant.username, hasAvatar: participant.has_avatar })}>View {participant.username}â€™s profile</button>}
               </div>
             );
           }) : <p className="panel-description">No conversations yet. Start a message with someone available to your role.</p>}
@@ -1612,10 +1536,10 @@ export function CommunicationsPage() {
               <h2 className="panel-title">New message</h2>
               {contacts.length ? (
                 <form className="message-form" onSubmit={submit}>
-                  <label className="field"><span>To</span><select name="recipient" required value={selectedRecipient} onChange={(event) => setSelectedRecipient(event.target.value)}><option value="" disabled>Select a contact</option>{contacts.map((contact) => <option key={contact.id} value={contact.id}>{contact.username} · {roleDisplayName(contact.role)}</option>)}</select></label>
+                  <label className="field"><span>To</span><select name="recipient" required value={selectedRecipient} onChange={(event) => setSelectedRecipient(event.target.value)}><option value="" disabled>Select a contact</option>{contacts.map((contact) => <option key={contact.id} value={contact.id}>{contact.username} Â· {roleDisplayName(contact.role)}</option>)}</select></label>
                   <label className="field"><span>Subject</span><input name="subject" required maxLength={200} /></label>
                   <label className="field"><span>Message</span><textarea name="body" required rows={5} /></label>
-                  <button className="button button-primary" type="submit" disabled={sending}>{sending ? "Sending…" : "Send message"}</button>
+                  <button className="button button-primary" type="submit" disabled={sending}>{sending ? "Sendingâ€¦" : "Send message"}</button>
                 </form>
               ) : <div className="empty-state"><strong>No contacts available</strong>Your role and property assignments determine who you can message.</div>}
             </>
@@ -1636,7 +1560,7 @@ export function CommunicationsPage() {
                   return <article className={`message-bubble ${message.sender === user?.id ? "mine" : ""}`} key={message.id}><span className="conversation-person"><UserAvatar userId={sender?.id} hasAvatar={sender?.has_avatar} name={message.sender_name} className="user-avatar" />{sender ? <button className="profile-trigger" type="button" onClick={() => setSelectedProfile({ userId: sender.id, name: message.sender_name, hasAvatar: sender.has_avatar })}>{message.sender_name}</button> : <strong>{message.sender_name}</strong>}</span><p>{message.body}</p><small>{new Date(message.sent_at).toLocaleString()}</small></article>;
                 })}
               </div>
-              <form className="message-reply" onSubmit={submit}><label className="field"><span>Reply</span><textarea name="body" rows={3} required /></label><button className="button button-primary" type="submit" disabled={sending}>{sending ? "Sending…" : "Send reply"}</button></form>
+              <form className="message-reply" onSubmit={submit}><label className="field"><span>Reply</span><textarea name="body" rows={3} required /></label><button className="button button-primary" type="submit" disabled={sending}>{sending ? "Sendingâ€¦" : "Send reply"}</button></form>
             </>
           ) : <div className="empty-state"><strong>Choose a conversation</strong>Your messages stay private to the participants.</div>}
         </section>
@@ -1755,15 +1679,15 @@ export function TenancyEventsPage() {
 
   return (
     <section>
-      <PageHeader title="Check-in & check-out" eyebrow="Move workflow" description="Managers and assigned staff record a move-in or move-out against the tenant’s assigned unit." icon="calendar" />
+      <PageHeader title="Check-in & check-out" eyebrow="Move workflow" description="Managers and assigned staff record a move-in or move-out against the tenantâ€™s assigned unit." icon="calendar" />
       {error && <div className="error-state" role="alert">{error}</div>}
       {success && <div className="auth-message success" role="status">{success}</div>}
       <section className="panel">
         <div className="panel-heading"><div><h2 className="panel-title">Record a tenancy event</h2><p className="panel-description">Check-in marks the unit occupied. A manager grants tenant portal access by linking the tenant account; check-out makes the unit vacant and revokes that access.</p></div></div>
-        {loading ? <div className="loading-state" role="status">Loading assigned tenants…</div> : tenants.length ? (
+        {loading ? <div className="loading-state" role="status">Loading assigned tenantsâ€¦</div> : tenants.length ? (
           <form onSubmit={submit}>
             <div className="form-grid">
-              <label className="field"><span>Tenant</span><select value={selectedTenant} onChange={(event) => setSelectedTenant(event.target.value)} required><option value="" disabled>Select tenant</option>{tenants.map((item) => <option value={item.id} key={item.id}>{item.name} · {item.property_name} {item.unit_number ? `· ${item.unit_number}` : ""}</option>)}</select></label>
+              <label className="field"><span>Tenant</span><select value={selectedTenant} onChange={(event) => setSelectedTenant(event.target.value)} required><option value="" disabled>Select tenant</option>{tenants.map((item) => <option value={item.id} key={item.id}>{item.name} Â· {item.property_name} {item.unit_number ? `Â· ${item.unit_number}` : ""}</option>)}</select></label>
               <label className="field"><span>Action</span><select value={action} onChange={(event) => setAction(event.target.value as "check_in" | "check_out")}><option value="check_in">Check in</option><option value="check_out">Check out</option></select></label>
               <label className="field field-full"><span>Notes</span><textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={3} placeholder="Optional handover notes" /></label>
               <label className="field field-full">
@@ -1792,15 +1716,15 @@ export function TenancyEventsPage() {
             </div>
             {tenant && !tenant.unit && <div className="hint-card"><strong>No unit assigned</strong>Assign this tenant to a unit before recording a move.</div>}
             {tenant?.unit && !actionAvailable && <div className="hint-card"><strong>Action unavailable</strong>{action === "check_in" ? "Check-in requires a pending tenancy and a vacant unit." : "Check-out requires an active tenancy and an occupied unit."}</div>}
-            <div className="form-actions"><button className="button button-primary" type="submit" disabled={saving || !actionAvailable}>{saving ? "Saving…" : action === "check_in" ? "Record check-in" : "Record check-out"}</button></div>
+            <div className="form-actions"><button className="button button-primary" type="submit" disabled={saving || !actionAvailable}>{saving ? "Savingâ€¦" : action === "check_in" ? "Record check-in" : "Record check-out"}</button></div>
           </form>
         ) : <div className="empty-state"><strong>No assigned tenants</strong>Tenants with an assigned unit will appear here.</div>}
       </section>
       <section className="panel tenancy-events-panel">
         <div className="panel-heading"><div><h2 className="panel-title">Recent move events</h2><p className="panel-description">Check-in and check-out audit history for your access scope.</p></div></div>
-        {events.length ? <div className="table-wrap"><table><thead><tr><th>Action</th><th>Tenant</th><th>Property & unit</th><th>Recorded by</th><th>Date</th><th>Evidence</th><th>Notes</th></tr></thead><tbody>{events.map((item) => <tr key={item.id}><td><span className={`status-pill ${item.action === "check_in" ? "green" : ""}`}>{item.action.replaceAll("_", " ")}</span></td><td><span className="conversation-person">{item.tenant_user_id ? <UserAvatar userId={item.tenant_user_id} hasAvatar={item.tenant_has_avatar} name={item.tenant_name} className="user-avatar" /> : null}{item.tenant_user_id ? <button className="table-primary profile-trigger" type="button" onClick={() => setSelectedProfile({ userId: item.tenant_user_id as number, name: item.tenant_name, hasAvatar: item.tenant_has_avatar })}>{item.tenant_name}</button> : item.tenant_name}</span></td><td>{item.property_name} · {item.unit_number}</td><td>{item.recorded_by_name}</td><td>{new Date(item.recorded_at).toLocaleString()}</td><td>{item.evidence_photo ? <button className="button button-secondary button-compact" type="button" onClick={() => void openEvidence(item.id)}>View photo</button> : "—"}</td><td>{item.notes || "—"}</td></tr>)}</tbody></table></div> : <div className="empty-state"><strong>No move events yet</strong>Recorded check-ins and check-outs will be listed here.</div>}
+        {events.length ? <div className="table-wrap"><table><thead><tr><th>Action</th><th>Tenant</th><th>Property & unit</th><th>Recorded by</th><th>Date</th><th>Evidence</th><th>Notes</th></tr></thead><tbody>{events.map((item) => <tr key={item.id}><td><span className={`status-pill ${item.action === "check_in" ? "green" : ""}`}>{item.action.replaceAll("_", " ")}</span></td><td><span className="conversation-person">{item.tenant_user_id ? <UserAvatar userId={item.tenant_user_id} hasAvatar={item.tenant_has_avatar} name={item.tenant_name} className="user-avatar" /> : null}{item.tenant_user_id ? <button className="table-primary profile-trigger" type="button" onClick={() => setSelectedProfile({ userId: item.tenant_user_id as number, name: item.tenant_name, hasAvatar: item.tenant_has_avatar })}>{item.tenant_name}</button> : item.tenant_name}</span></td><td>{item.property_name} Â· {item.unit_number}</td><td>{item.recorded_by_name}</td><td>{new Date(item.recorded_at).toLocaleString()}</td><td>{item.evidence_photo ? <button className="button button-secondary button-compact" type="button" onClick={() => void openEvidence(item.id)}>View photo</button> : "â€”"}</td><td>{item.notes || "â€”"}</td></tr>)}</tbody></table></div> : <div className="empty-state"><strong>No move events yet</strong>Recorded check-ins and check-outs will be listed here.</div>}
       </section>
-      {viewingEvidence && <div className="evidence-overlay" role="presentation" onClick={closeEvidence}><section className="evidence-dialog" role="dialog" aria-modal="true" aria-label="Handover evidence photo" onClick={(event) => event.stopPropagation()}><button className="button button-secondary" type="button" onClick={closeEvidence}>Close photo</button><Image src={viewingEvidence} alt="Handover evidence" width={1200} height={900} unoptimized /></section></div>}
+      {viewingEvidence && <div className="evidence-overlay" role="presentation" onClick={closeEvidence}><AccessibleDialog onClose={closeEvidence} className="evidence-dialog" aria-label="Handover evidence photo" onClick={(event) => event.stopPropagation()}><button className="button button-secondary" type="button" onClick={closeEvidence}>Close photo</button><Image src={viewingEvidence} alt="Handover evidence" width={1200} height={900} unoptimized /></AccessibleDialog></div>}
       {selectedProfile && (
         <PublicProfileDialog
           userId={selectedProfile.userId}
@@ -1814,7 +1738,7 @@ export function TenancyEventsPage() {
 }
 
 function metricValue(value: number | string | undefined) {
-  return value === undefined ? "—" : value;
+  return value === undefined ? "â€”" : value;
 }
 
 function Metric({ label, value, note, icon }: { label: string; value: number | string; note: string; icon: string }) {
@@ -1900,10 +1824,10 @@ export function OverviewPage() {
       <section>
         <PageHeader title={roleTitle} eyebrow="Your home" description={`Welcome, ${user?.username || user?.email}. Your workspace is ready.`} icon="home" />
         {error && <div className="error-state" role="alert"><span>{error}</span><button className="button button-secondary" onClick={() => void load()} type="button">Try again</button></div>}
-        {!error && loading ? <div className="loading-state" role="status">Loading your account…</div> : !error && (
+        {!error && loading ? <div className="loading-state" role="status">Loading your accountâ€¦</div> : !error && (
           <>
             <div className="metric-grid">
-              <Metric label="Monthly rent" value={tenantProfile?.rent ?? "—"} note={tenantProfile?.unit_number ? `${tenantProfile.unit_number} · ${tenantProfile.property_name}` : "Your tenancy record"} icon="home" />
+              <Metric label="Monthly rent" value={tenantProfile?.rent ?? "â€”"} note={tenantProfile?.unit_number ? `${tenantProfile.unit_number} Â· ${tenantProfile.property_name}` : "Your tenancy record"} icon="home" />
               <Metric label="Lease status" value={tenantProfile?.status ?? "Not linked"} note={tenantProfile?.lease_end ? `Ends ${new Date(tenantProfile.lease_end).toLocaleDateString()}` : "Ask your manager to link your lease"} icon="calendar" />
               <Metric label="Payments" value={payments.length} note="Records linked to your account" icon="payments" />
               <Metric label="Maintenance requests" value={jobs.length} note="Requests linked to your account" icon="maintenance" />
@@ -1911,11 +1835,11 @@ export function OverviewPage() {
             <div className="dashboard-grid">
               <section className="panel">
                 <div className="panel-heading"><div><h2 className="panel-title">Recent rent payments</h2><p className="panel-description">Payment records linked to your tenant profile.</p></div><Link className="button button-secondary" href="/dashboard/reconciliation">View payments <Icon name="arrow" /></Link></div>
-                {payments.length ? <div className="activity-list">{payments.slice(0, 5).map((payment) => <div className="activity-row" key={payment.id}><span className="activity-mark"><Icon name="payments" /></span><span className="activity-copy"><strong>{payment.reference}</strong><small>{new Date(payment.date).toLocaleDateString()} · {payment.method.replaceAll("_", " ")}</small></span><span className="activity-amount">KSh {Number(payment.amount).toLocaleString()}</span></div>)}</div> : <div className="empty-state"><strong>No payment records yet</strong>When your tenant profile is linked, your payment history will appear here.</div>}
+                {payments.length ? <div className="activity-list">{payments.slice(0, 5).map((payment) => <div className="activity-row" key={payment.id}><span className="activity-mark"><Icon name="payments" /></span><span className="activity-copy"><strong>{payment.reference}</strong><small>{new Date(payment.date).toLocaleDateString()} Â· {payment.method.replaceAll("_", " ")}</small></span><span className="activity-amount">KSh {Number(payment.amount).toLocaleString()}</span></div>)}</div> : <div className="empty-state"><strong>No payment records yet</strong>When your tenant profile is linked, your payment history will appear here.</div>}
               </section>
               <section className="panel">
                 <div className="panel-heading"><div><h2 className="panel-title">Your maintenance</h2><p className="panel-description">Submit an issue and keep track of your requests.</p></div></div>
-                <div className="activity-list">{jobs.slice(0, 4).map((job) => <div className="activity-row" key={job.id}><span className="activity-mark"><Icon name="maintenance" /></span><span className="activity-copy"><strong>{job.issue}</strong><small>{job.job_id} · {new Date(job.date).toLocaleDateString()}</small></span><span className={`status-pill ${statusClass("status", job.status)}`}>{job.status.replaceAll("_", " ")}</span></div>)}</div>
+                <div className="activity-list">{jobs.slice(0, 4).map((job) => <div className="activity-row" key={job.id}><span className="activity-mark"><Icon name="maintenance" /></span><span className="activity-copy"><strong>{job.issue}</strong><small>{job.job_id} Â· {new Date(job.date).toLocaleDateString()}</small></span><span className={`status-pill ${statusClass("status", job.status)}`}>{job.status.replaceAll("_", " ")}</span></div>)}</div>
                 {!tenantProfile && <div className="hint-card"><strong>Tenant record not linked</strong>Your manager needs to link your account to a tenant and unit record before requests can be associated with your home.</div>}
                 <Link className="button button-primary" href="/dashboard/maintenance" style={{ marginTop: 16 }}><Icon name="add" />Open maintenance</Link>
               </section>
@@ -1931,7 +1855,7 @@ export function OverviewPage() {
       <section>
         <PageHeader title={roleTitle} eyebrow="Service work orders" description="Review maintenance records available to your service account." icon="maintenance" />
         {error && <div className="error-state" role="alert"><span>{error}</span><button className="button button-secondary" onClick={() => void load()} type="button">Try again</button></div>}
-        {loading ? <div className="loading-state" role="status">Loading work orders…</div> : (
+        {loading ? <div className="loading-state" role="status">Loading work ordersâ€¦</div> : (
           <>
             <div className="metric-grid">
               <Metric label="Work orders" value={jobs.length} note="Returned by maintenance API" icon="maintenance" />
@@ -1941,7 +1865,7 @@ export function OverviewPage() {
             </div>
             <section className="panel">
               <div className="panel-heading"><div><h2 className="panel-title">Recent work orders</h2><p className="panel-description">Only work orders assigned to your service account appear here.</p></div><Link className="button button-secondary" href="/dashboard/maintenance">View work orders <Icon name="arrow" /></Link></div>
-              {jobs.slice(0, 6).length ? <div className="activity-list">{jobs.slice(0, 6).map((job) => <div className="activity-row" key={job.id}><span className="activity-mark"><Icon name="maintenance" /></span><span className="activity-copy"><strong>{job.issue}</strong><small>{job.job_id} · {job.property_name}{job.unit_number ? ` · ${job.unit_number}` : ""}</small></span><span className={`status-pill ${statusClass("status", job.status)}`}>{job.status.replaceAll("_", " ")}</span></div>)}</div> : <div className="empty-state"><strong>No work orders yet</strong>New service records will appear here.</div>}
+              {jobs.slice(0, 6).length ? <div className="activity-list">{jobs.slice(0, 6).map((job) => <div className="activity-row" key={job.id}><span className="activity-mark"><Icon name="maintenance" /></span><span className="activity-copy"><strong>{job.issue}</strong><small>{job.job_id} Â· {job.property_name}{job.unit_number ? ` Â· ${job.unit_number}` : ""}</small></span><span className={`status-pill ${statusClass("status", job.status)}`}>{job.status.replaceAll("_", " ")}</span></div>)}</div> : <div className="empty-state"><strong>No work orders yet</strong>New service records will appear here.</div>}
             </section>
           </>
         )}
@@ -1955,13 +1879,13 @@ export function OverviewPage() {
       <section>
         <PageHeader title="System administration" eyebrow="Account governance" description="Provision roles, manage active accounts and review system configuration. Property operations and private conversations are not part of this view." icon="settings" actions={<Link className="button button-primary" href="/dashboard/staff"><Icon name="staff" />Manage users</Link>} />
         {error && <div className="error-state" role="alert"><span>{error}</span><button className="button button-secondary" onClick={() => void load()} type="button">Try again</button></div>}
-        {loading ? <div className="loading-state" role="status">Loading user registry…</div> : !error && (
+        {loading ? <div className="loading-state" role="status">Loading user registryâ€¦</div> : !error && (
           <>
             <div className="metric-grid">
               <Metric label="Registered accounts" value={adminUsers.length} note="Across all provisioned roles" icon="staff" />
               <Metric label="Pending tenant access" value={pendingTenantAccess} note="Managers grant access when linking a tenant record" icon="tenants" />
               <Metric label="Active accounts" value={adminUsers.filter((item) => item.is_active_user).length} note="Enabled in the account registry" icon="check" />
-              <Metric label="Direct unit assignments" value={adminUsers.reduce((total, item) => total + item.assigned_units.length, 0)} note="Staff otherwise inherit their manager’s portfolio" icon="properties" />
+              <Metric label="Direct unit assignments" value={adminUsers.reduce((total, item) => total + item.assigned_units.length, 0)} note="Staff otherwise inherit their managerâ€™s portfolio" icon="properties" />
             </div>
             <div className="dashboard-grid">
               <section className="panel"><div className="panel-heading"><div><h2 className="panel-title">Role provisioning</h2><p className="panel-description">Only administrators can grant manager and staff roles.</p></div></div><Link className="button button-primary" href="/dashboard/staff">Open user access</Link></section>
@@ -1978,7 +1902,7 @@ export function OverviewPage() {
       <section>
         <PageHeader title="Agency staff workspace" eyebrow="Shared portfolio operations" description="You can work with the properties and units managed by the manager who onboarded you, plus any units an administrator assigned directly. Financial ledgers stay restricted to managers." icon="dashboard" actions={<Link className="button button-secondary" href="/dashboard/tenancy-events"><Icon name="calendar" />Move workflow</Link>} />
         {error && <div className="error-state" role="alert"><span>{error}</span><button className="button button-secondary" onClick={() => void load()} type="button">Try again</button></div>}
-        {loading ? <div className="loading-state" role="status">Loading portfolio operations…</div> : !error && (
+        {loading ? <div className="loading-state" role="status">Loading portfolio operationsâ€¦</div> : !error && (
           <div className="metric-grid">
             <Metric label="Properties in scope" value={stats?.total_properties ?? 0} note="Contains a unit you can work with" icon="properties" />
             <Metric label="Tenant records" value={stats?.total_tenants ?? 0} note={`${stats?.active_leases ?? 0} active leases`} icon="tenants" />
@@ -1992,14 +1916,14 @@ export function OverviewPage() {
 
   return (
     <section>
-      <PageHeader title={roleTitle} eyebrow="SmartNest · Property operations" description="A clear view of the records and activity currently available from your workspace." icon="dashboard" actions={["admin", "manager", "staff"].includes(role) ? <Link className="button button-secondary" href="/dashboard/properties"><Icon name="properties" />View properties</Link> : undefined} />
+      <PageHeader title={roleTitle} eyebrow="SmartNest Â· Property operations" description="A clear view of the records and activity currently available from your workspace." icon="dashboard" actions={["admin", "manager", "staff"].includes(role) ? <Link className="button button-secondary" href="/dashboard/properties"><Icon name="properties" />View properties</Link> : undefined} />
       {error && <div className="error-state" role="alert"><span>{error}</span><button className="button button-secondary" onClick={() => void load()} type="button">Try again</button></div>}
-      {loading ? <div className="loading-state" role="status">Loading portfolio data…</div> : (
+      {loading ? <div className="loading-state" role="status">Loading portfolio dataâ€¦</div> : (
         <>
           <div className="metric-grid">
             <Metric label="Properties" value={metricValue(stats?.total_properties)} note="Across the current portfolio" icon="properties" />
             <Metric label="Tenants" value={metricValue(stats?.total_tenants)} note={`${metricValue(stats?.active_leases)} active leases`} icon="tenants" />
-            <Metric label="Recorded rent received" value={stats?.rental_income ?? "—"} note={`${payments.length} payment records returned`} icon="payments" />
+            <Metric label="Recorded rent received" value={stats?.rental_income ?? "â€”"} note={`${payments.length} payment records returned`} icon="payments" />
             <Metric label="Open work orders" value={jobs.filter((job) => job.status !== "completed").length} note={`${jobs.length} total maintenance records`} icon="maintenance" />
           </div>
           <div className="dashboard-grid">
@@ -2008,7 +1932,7 @@ export function OverviewPage() {
               {recentPayments.length ? (
                 <div className="activity-list">
                   {recentPayments.map((payment) => (
-                    <div className="activity-row" key={payment.id}><span className="activity-mark"><Icon name="payments" /></span><span className="activity-copy"><strong>{payment.tenant_name || payment.reference}</strong><small>{payment.reference} · {payment.date}</small></span><span className="activity-amount">KSh {Number(payment.amount).toLocaleString()}</span></div>
+                    <div className="activity-row" key={payment.id}><span className="activity-mark"><Icon name="payments" /></span><span className="activity-copy"><strong>{payment.tenant_name || payment.reference}</strong><small>{payment.reference} Â· {payment.date}</small></span><span className="activity-amount">KSh {Number(payment.amount).toLocaleString()}</span></div>
                   ))}
                 </div>
               ) : <div className="empty-state"><strong>No payment activity yet</strong>When payments are recorded, the latest entries will show here.</div>}
@@ -2066,7 +1990,7 @@ export function AnalyticsPage() {
     <section>
       <PageHeader title="Analytics" eyebrow="Portfolio performance" description="Explore payments, expenses and occupancy using live records from the SmartNest API." icon="analytics" />
       {error && <div className="error-state" role="alert">{error}</div>}
-      {loading ? <div className="loading-state" role="status">Loading analytics…</div> : (
+      {loading ? <div className="loading-state" role="status">Loading analyticsâ€¦</div> : (
         <>
           <div className="metric-grid">
             <Metric label="Payments recorded" value={payments.length} note={`KSh ${totalPayments.toLocaleString()} total`} icon="payments" />
@@ -2142,7 +2066,7 @@ export function ProfilePage() {
       setMessage(file ? "Your profile photo has been updated." : "Your profile photo has been removed.");
       return true;
     } catch {
-      setAvatarError("We couldn’t update your profile photo. Please try again.");
+      setAvatarError("We couldnâ€™t update your profile photo. Please try again.");
       return false;
     } finally {
       setPhotoSaving(false);
@@ -2167,7 +2091,7 @@ export function ProfilePage() {
       window.dispatchEvent(new Event("smartnest:avatar-updated"));
       setMessage("Your profile has been updated.");
     } catch {
-      setMessage("We couldn’t update your profile. Check the details and try again.");
+      setMessage("We couldnâ€™t update your profile. Check the details and try again.");
     } finally {
       setSaving(false);
     }
@@ -2183,7 +2107,7 @@ export function ProfilePage() {
     const newPassword = String(form.get("new_password1") ?? "");
     const confirmPassword = String(form.get("new_password2") ?? "");
     if (newPassword !== confirmPassword) {
-      setPasswordError("The new passwords don’t match.");
+      setPasswordError("The new passwords donâ€™t match.");
       setPasswordSaving(false);
       return;
     }
@@ -2205,7 +2129,7 @@ export function ProfilePage() {
         : undefined;
       const errors = response?.data;
       const firstError = errors ? Object.values(errors).flatMap((value) => Array.isArray(value) ? value : [value]).find((value) => typeof value === "string") : undefined;
-      setPasswordError(typeof firstError === "string" ? firstError : "We couldn’t update your password. Check the current password and try again.");
+      setPasswordError(typeof firstError === "string" ? firstError : "We couldnâ€™t update your password. Check the current password and try again.");
     } finally {
       setPasswordSaving(false);
     }
@@ -2245,18 +2169,18 @@ export function ProfilePage() {
           </div>
           {avatarError && <div className="form-error" role="alert">{avatarError}</div>}
           {message && <div className="form-message" role="status">{message}</div>}
-          <div className="form-actions"><button className="button button-primary" type="submit" disabled={saving || photoSaving}>{saving ? "Saving…" : "Save profile"}</button></div>
+          <div className="form-actions"><button className="button button-primary" type="submit" disabled={saving || photoSaving}>{saving ? "Savingâ€¦" : "Save profile"}</button></div>
         </form>
       </section>
       <section className="panel form-panel" id="password">
-        <div className="panel-heading"><div><h2 className="panel-title">Change your password</h2><p className="panel-description">Use a unique password. You’ll be asked to sign in again after changing it.</p></div></div>
+        <div className="panel-heading"><div><h2 className="panel-title">Change your password</h2><p className="panel-description">Use a unique password. Youâ€™ll be asked to sign in again after changing it.</p></div></div>
         {passwordError && <div className="auth-message" role="alert">{passwordError}</div>}
         {passwordMessage && <div className="auth-message success" role="status">{passwordMessage}</div>}
         <form className="auth-form password-change-form" onSubmit={changePassword}>
           <div className="field"><label htmlFor="current-password">Current password</label><PasswordInput className="auth-input" id="current-password" name="current_password" autoComplete="current-password" required /></div>
           <div className="field"><label htmlFor="new-password">New password</label><PasswordInput className="auth-input" id="new-password" name="new_password1" autoComplete="new-password" minLength={8} required /></div>
           <div className="field"><label htmlFor="repeat-new-password">Repeat new password</label><PasswordInput className="auth-input" id="repeat-new-password" name="new_password2" autoComplete="new-password" minLength={8} required /></div>
-          <div className="form-actions"><button className="button button-primary" type="submit" disabled={passwordSaving}>{passwordSaving ? "Updating…" : "Change password"}</button></div>
+          <div className="form-actions"><button className="button button-primary" type="submit" disabled={passwordSaving}>{passwordSaving ? "Updatingâ€¦" : "Change password"}</button></div>
         </form>
       </section>
     </section>
@@ -2277,7 +2201,7 @@ export function HelpPage() {
       <PageHeader title="Help & support" eyebrow="Account" description="Quick routes to common property operations." icon="help" />
       <div className="support-grid">{links.map((link) => <article className="panel support-card" key={link.href}><span className="metric-icon"><Icon name={link.icon} /></span><h3>{link.title}</h3><p>{link.description}</p><Link className="button button-secondary" href={link.href}>Open <Icon name="arrow" /></Link></article>)}</div>
       <section className="panel role-workflow-panel">
-        <div className="panel-heading"><div><h2 className="panel-title">Who can see and manage what?</h2><p className="panel-description">Access follows the work people need to do—not every record in the system.</p></div></div>
+        <div className="panel-heading"><div><h2 className="panel-title">Who can see and manage what?</h2><p className="panel-description">Access follows the work people need to doâ€”not every record in the system.</p></div></div>
         <div className="role-workflow-list">
           <p><strong>System administrator</strong><span>Manages accounts, roles, and which properties belong to each manager. Admin access to conversations and tenant records is limited unless needed for administration.</span></p>
           <p><strong>Property manager</strong><span>Manages only assigned properties and their units, tenants, payments, expenses, maintenance, and handovers. Creates staff and maintenance accounts and invites tenants.</span></p>
@@ -2285,7 +2209,7 @@ export function HelpPage() {
           <p><strong>Maintenance</strong><span>Sees only work orders assigned to their account, along with the tenant and property contact details needed to complete each job. Cannot browse the wider tenant or property directory.</span></p>
           <p><strong>Tenant</strong><span>Sees their linked tenancy, payments, and maintenance requests. Can raise repair requests and contact permitted property contacts.</span></p>
         </div>
-        <p className="panel-description role-workflow-note">This is a product access summary, not legal advice. In Kenya, the Data Protection Act 2019 requires personal data to be handled lawfully, fairly, transparently, for a specific purpose, and with appropriate safeguards. SmartNest’s owner remains responsible for confirming the lawful basis, notices, retention period, and access/rectification process for their use.</p>
+        <p className="panel-description role-workflow-note">This is a product access summary, not legal advice. In Kenya, the Data Protection Act 2019 requires personal data to be handled lawfully, fairly, transparently, for a specific purpose, and with appropriate safeguards. SmartNestâ€™s owner remains responsible for confirming the lawful basis, notices, retention period, and access/rectification process for their use.</p>
         <a className="button button-secondary" href="https://www.odpc.go.ke/data-protection-laws-kenya/" target="_blank" rel="noreferrer">Read Kenya ODPC guidance</a>
       </section>
     </section>
@@ -2302,7 +2226,7 @@ export function SettingsPage() {
     try {
       const response = await healthAPI.check();
       setStatus("Connected");
-      setDetail(`${response.data.service} · ${response.data.status}`);
+      setDetail(`${response.data.service} Â· ${response.data.status}`);
     } catch (error) {
       setStatus("Unavailable");
       setDetail(error instanceof Error ? error.message : "The API health check failed.");
@@ -2318,11 +2242,11 @@ export function SettingsPage() {
         <section className="panel">
           <div className="panel-heading"><div><h2 className="panel-title">Backend connection</h2><p className="panel-description">The API endpoint is configured by the frontend deployment environment.</p></div><span className={`status-pill ${status === "Connected" ? "green" : status === "Unavailable" ? "danger" : ""}`}>{status}</span></div>
           <p className="panel-description">{detail}</p>
-          <button className="button button-primary" style={{ marginTop: 16 }} type="button" disabled={checking} onClick={() => void checkService()}>{checking ? "Checking…" : "Test API connection"}</button>
+          <button className="button button-primary" style={{ marginTop: 16 }} type="button" disabled={checking} onClick={() => void checkService()}>{checking ? "Checkingâ€¦" : "Test API connection"}</button>
         </section>
         <section className="panel">
           <div className="panel-heading"><div><h2 className="panel-title">Appearance</h2><p className="panel-description">Use the theme toggle in the header to change your workspace.</p></div></div>
-          <div className="theme-preview"><span className="theme-swatch" /><span><strong>SmartNest green</strong><span className="panel-description" style={{ display: "block" }}>#2E6F40 · Your selection is saved in this browser.</span></span></div>
+          <div className="theme-preview"><span className="theme-swatch" /><span><strong>SmartNest green</strong><span className="panel-description" style={{ display: "block" }}>#2E6F40 Â· Your selection is saved in this browser.</span></span></div>
         </section>
       </div>
     </section>

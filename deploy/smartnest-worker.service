@@ -1,0 +1,22 @@
+[Unit]
+Description=SmartNest automation worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=smartnest
+Group=smartnest
+WorkingDirectory=/opt/smartnest/backend
+EnvironmentFile=/etc/smartnest/backend.env
+ExecStart=/opt/smartnest/.venv/bin/python manage.py process_smartnest_automations --loop --interval 60
+Restart=always
+RestartSec=10
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/smartnest
+
+[Install]
+WantedBy=multi-user.target
