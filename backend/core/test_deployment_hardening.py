@@ -173,8 +173,8 @@ class ImageAndKeyTests(SimpleTestCase):
              'SUPABASE_AUTH_ENABLED':'true','SUPABASE_URL':'https://example.supabase.co','SUPABASE_PUBLISHABLE_KEY':'test-only',
              'FRONTEND_URL':'https://example.com','DJANGO_CORS_ORIGINS':'https://example.com','DJANGO_CSRF_ORIGINS':'https://example.com'}
         env.pop('DEBUG',None)
-        result=subprocess.run([sys.executable,'-c','import smartnest_api.settings as s; assert not s.DEBUG; assert s.SECURE_SSL_REDIRECT and s.CSRF_COOKIE_SECURE and s.SESSION_COOKIE_SECURE; assert not s.CORS_ALLOW_ALL_ORIGINS'],env=env,capture_output=True)
+        result=subprocess.run([sys.executable,'-c','import smartnest_api.settings as s; assert not s.DEBUG; assert s.SECURE_SSL_REDIRECT and s.CSRF_COOKIE_SECURE and s.SESSION_COOKIE_SECURE; assert not s.CORS_ALLOW_ALL_ORIGINS'],env=env,cwd=Path(__file__).resolve().parents[1],capture_output=True)
         self.assertEqual(result.returncode,0,result.stderr.decode())
         for bad in ({'DEBUG':'true'},{'DJANGO_ALLOWED_HOSTS':'*'},{'DB_USER':'postgres'},{'SUPABASE_AUTH_ENABLED':'false'}):
-            result=subprocess.run([sys.executable,'-c','import smartnest_api.settings'],env={**env,**bad},capture_output=True)
+            result=subprocess.run([sys.executable,'-c','import smartnest_api.settings'],env={**env,**bad},cwd=Path(__file__).resolve().parents[1],capture_output=True)
             self.assertNotEqual(result.returncode,0)

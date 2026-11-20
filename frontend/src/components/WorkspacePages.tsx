@@ -126,62 +126,6 @@ const propertyForm: CreateForm = {
   create: (values) => propertiesAPI.create({ ...values, total_units: numberValue(values, "total_units") }),
 };
 
-const unitForm: CreateForm = {
-  title: "Add a unit",
-  submitLabel: "Save unit",
-  allowedRoles: ["admin", "manager"],
-  fields: [
-    { name: "property", label: "Property", type: "select", required: true, options: (refs) => listOptions(refs, "properties", "name") },
-    { name: "unit_number", label: "Unit number", required: true, placeholder: "A-102" },
-    { name: "unit_type", label: "Unit type", required: true, placeholder: "One bedroom" },
-    { name: "rent", label: "Monthly rent", required: true, placeholder: "KSh 24,000" },
-    { name: "status", label: "Availability", type: "select", required: true, options: () => [{ label: "Vacant", value: "vacant" }, { label: "Occupied", value: "occupied" }] },
-    { name: "tenant", label: "Current tenant", placeholder: "Optional" },
-  ],
-  create: (values) => unitsAPI.create({ ...values, property: numberValue(values, "property") }),
-};
-
-const tenantForm: CreateForm = {
-  title: "Add a tenant",
-  submitLabel: "Save tenant",
-  allowedRoles: ["admin", "manager"],
-  fields: [
-    { name: "name", label: "Full name", required: true },
-    { name: "phone", label: "Phone number", type: "tel", required: true },
-    { name: "account_email", label: "Existing tenant account email", type: "email", placeholder: "Optional · links an existing tenant login" },
-    { name: "invite_email", label: "Tenant email for an invite link", type: "email", placeholder: "Optional · send them a portal invitation" },
-    { name: "property", label: "Property", type: "select", required: true, options: (refs) => listOptions(refs, "properties", "name") },
-    { name: "unit", label: "Unit", type: "select", options: (refs) => listOptions(refs, "units", "unit_number") },
-    { name: "lease_end", label: "Lease end date", type: "date", required: true },
-    { name: "rent", label: "Monthly rent", required: true, placeholder: "KSh 24,000" },
-    { name: "status", label: "Lease status", type: "select", required: true, options: () => [{ label: "Active", value: "active" }, { label: "Expiring", value: "expiring" }, { label: "Pending", value: "pending" }] },
-  ],
-  create: (values) => {
-    const tenantValues = { ...values };
-    delete tenantValues.invite_email;
-    return tenantsAPI.create({
-      ...tenantValues,
-      property: numberValue(values, "property"),
-      unit: values.unit ? numberValue(values, "unit") : null,
-    });
-  },
-  afterCreate: async (createdRecord, values) => {
-    const email = values.invite_email?.trim();
-    if (!email || values.account_email?.trim() || typeof createdRecord !== "object" || createdRecord === null || !("data" in createdRecord)) return null;
-    const responseData = (createdRecord as { data?: unknown }).data;
-    if (typeof responseData !== "object" || responseData === null || !("id" in responseData)) return null;
-    const tenantId = (responseData as { id?: unknown }).id;
-    if (typeof tenantId !== "number") return null;
-    const { data } = await tenantsAPI.invite(tenantId, email);
-    const url = new URL("/join", window.location.origin);
-    url.searchParams.set("token", data.token);
-    return url.toString();
-  },
-  validate: (values) => values.account_email?.trim() && values.invite_email?.trim()
-    ? "Use either an existing tenant account email or an invitation email, not both."
-    : null,
-};
-
 const paymentForm: CreateForm = {
   title: "Record a payment",
   submitLabel: "Save payment",
