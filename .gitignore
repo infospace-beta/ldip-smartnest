@@ -58,3 +58,6 @@ backend/.runtime/
 # OS
 .DS_Store
 Thumbs.db
+
+# Private environment configuration
+.env

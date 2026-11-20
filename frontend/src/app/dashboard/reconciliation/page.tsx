@@ -1,7 +1,8 @@
 "use client";
 
 import { RecordsPage } from "@/components/WorkspacePages";
+import MpesaSandbox from "@/components/MpesaSandbox";
 
 export default function PaymentsRoute() {
-  return <RecordsPage page="reconciliation" />;
+  return <><MpesaSandbox/><RecordsPage page="reconciliation" /></>;
 }

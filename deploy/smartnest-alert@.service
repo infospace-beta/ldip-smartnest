@@ -1,0 +1,15 @@
+[Unit]
+Description=Alert on SmartNest service failure
+After=network-online.target
+[Service]
+Type=oneshot
+User=smartnest
+WorkingDirectory=/opt/smartnest/backend
+EnvironmentFile=/etc/smartnest/backend.env
+Environment=PYTHONPATH=/opt/smartnest/backend
+ExecStart=/opt/smartnest/.venv/bin/python -B /opt/smartnest/deploy/service-alert.py %i
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict

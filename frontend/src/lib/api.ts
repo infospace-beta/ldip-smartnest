@@ -37,7 +37,9 @@ export function getApiErrorMessage(error: unknown, fallback: string): string {
 }
 
 api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {
-  if (typeof window !== "undefined") {
+  // Preserve a token explicitly bound to an auth-state snapshot. Looking up
+  // the current session here could substitute a different user or refreshed token.
+  if (typeof window !== "undefined" && !config.headers.has("Authorization")) {
     const { data: { session }, error } = await withSessionDeadline(createClient().auth.getSession());
     if (error) throw error;
     if (session) config.headers.Authorization = `Bearer ${session.access_token}`;
@@ -49,6 +51,8 @@ export default api;
 
 export interface User {
   requires_mfa: boolean;
+  mfa_enabled: boolean;
+  security_prompt_dismissed: boolean;
   id: number;
   email: string;
   username: string;
@@ -294,7 +298,7 @@ export interface DashboardStats {
 }
 
 export const authAPI = {
-  me: () => api.get<User>("/auth/me/"),
+  me: (accessToken?: string) => api.get<User>("/auth/me/", accessToken ? {headers:{Authorization:`Bearer ${accessToken}`}} : undefined),
   updateProfile: (data: Partial<Pick<User, "username" | "phone">> & { avatar_image?: File; remove_avatar?: boolean }) => {
     if (!data.avatar_image) {
       return api.patch<User>("/auth/me/", data);
@@ -321,11 +325,11 @@ export const authAPI = {
     return { data: { message: "Your password has been updated. Sign in again." } };
   },
   requestPasswordReset: async (email: string) => {
-    const { error } = await createClient().auth.resetPasswordForEmail(email, {
+    const { error } = await createClient().auth.resetPasswordForEmail(email.trim(), {
       redirectTo: `${window.location.origin}/auth/callback?next=/reset-password`,
     });
     if (error) throw new Error(authErrorMessage(error));
-    return { data: { message: "If an active account uses that email, a password reset link has been sent." } };
+    return { data: { message: "If this email has an account, check its inbox for the newest password-reset message. Older links may no longer work." } };
   },
   confirmPasswordReset: async (data: { new_password: string; confirm_password: string }) => {
     if (data.new_password !== data.confirm_password) throw new Error("The passwords don't match.");

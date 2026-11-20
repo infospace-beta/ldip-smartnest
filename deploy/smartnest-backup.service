@@ -1,0 +1,19 @@
+[Unit]
+OnFailure=smartnest-alert@%n.service
+Description=SmartNest encrypted consistent backup and offsite transfer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/smartnest
+EnvironmentFile=/etc/smartnest/backend.env
+EnvironmentFile=/etc/smartnest/backup.env
+ExecStart=/usr/bin/bash /opt/smartnest/deploy/backup-snapshot.sh
+UMask=0077
+TimeoutStartSec=1800
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/smartnest /run/lock

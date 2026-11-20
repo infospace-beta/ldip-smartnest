@@ -44,6 +44,28 @@ def uploaded_names():
                 yield from model.objects.exclude(**{field.name: ''}).values_list(field.name, flat=True)
 
 
+def stored_upload_names():
+    """Also preserve older/unreferenced files inside known upload directories."""
+    root = Path(settings.MEDIA_ROOT).resolve()
+    prefixes = set()
+    for model in apps.get_app_config('core').get_models():
+        for field in model._meta.fields:
+            if isinstance(field, FileField) and isinstance(field.upload_to, str):
+                prefix = field.upload_to.split('/')[0]
+                if prefix and prefix not in ('.', '..') and '%' not in prefix:
+                    prefixes.add(prefix)
+    names = set()
+    for prefix in prefixes:
+        directory = safe_file(root, prefix)
+        if directory.is_dir():
+            for path in directory.rglob('*'):
+                if path.is_file():
+                    name = path.relative_to(root).as_posix()
+                    safe_file(root, name)
+                    names.add(name)
+    return names
+
+
 def safe_file(root, name):
     root = Path(root).resolve()
     target = (root / name).resolve()
@@ -69,7 +91,7 @@ def make_backup(output, allow_missing=False):
         checksums = {}
         missing = []
         with ZipFile(archive, 'w', ZIP_DEFLATED) as bundle:
-            for name in sorted(set(uploaded_names())):
+            for name in sorted(set(uploaded_names()) | stored_upload_names()):
                 path = safe_file(settings.MEDIA_ROOT, name)
                 if not path.is_file():
                     if not allow_missing:

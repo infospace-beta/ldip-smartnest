@@ -32,8 +32,8 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['requires_mfa', 'id', 'email', 'username', 'role', 'phone', 'avatar', 'has_avatar', 'property_cluster', 'is_active_user', 'portal_access_granted', 'date_joined', 'registration_consent_at']
-        read_only_fields = ['id', 'date_joined', 'registration_consent_at']
+        fields = ['requires_mfa', 'mfa_enabled', 'security_prompt_dismissed', 'id', 'email', 'username', 'role', 'phone', 'avatar', 'has_avatar', 'property_cluster', 'is_active_user', 'portal_access_granted', 'date_joined', 'registration_consent_at']
+        read_only_fields = ['mfa_enabled', 'security_prompt_dismissed', 'id', 'date_joined', 'registration_consent_at']
 
     def get_has_avatar(self, obj):
         return bool(obj.avatar_image)

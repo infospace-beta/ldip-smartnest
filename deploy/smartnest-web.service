@@ -1,4 +1,5 @@
 [Unit]
+OnFailure=smartnest-alert@%n.service
 Description=SmartNest frontend
 After=network-online.target
 

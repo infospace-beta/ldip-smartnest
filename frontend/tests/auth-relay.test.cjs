@@ -63,7 +63,7 @@ test('recovery token hashes route to password reset',async()=>{
   let seen;
   const handler=callback({verifyOtp:async(v)=>{seen=v;return {error:null};}});
   const url=new URL('http://localhost:3000/auth/callback?token_hash=sample&type=recovery');
-  const r=await handler({nextUrl:url,url:url.href});assert.equal(r.headers.get('location'),'http://localhost:3000/reset-password');assert.equal(seen.type,'recovery');
+  const r=await handler({nextUrl:url,url:url.href});assert.equal(r.headers.get('location'),'http://localhost:3000/auth/recovery?token_hash=sample');assert.equal(seen,undefined);
 });
 test('callbacks reject expired links and external destinations',async()=>{
   const url=new URL('http://localhost:3000/auth/callback?code=sample&next=https://other.example.test');
@@ -71,4 +71,56 @@ test('callbacks reject expired links and external destinations',async()=>{
   assert.equal(success.headers.get('location'),'http://localhost:3000/dashboard');
   const expired=await callback({exchangeCodeForSession:async()=>({error:Error('expired')})})({nextUrl:url,url:url.href});
   assert.equal(expired.headers.get('location'),'http://localhost:3000/login?auth_error=1');
+});
+
+test('legacy magic-link hashes reach an explicit confirmation page without consuming them on GET',async()=>{
+  const url=new URL('http://localhost:3000/auth/callback?token_hash=sample&type=magiclink');
+  const response=await callback({})({nextUrl:url,url:url.href});
+  assert.equal(response.headers.get('location'),'http://localhost:3000/auth/magic-link?token_hash=sample');
+});
+
+test('confirmation resend is limited to signup and returns to the local callback',async()=>{
+  let seen;
+  const response=await relay(async(url,options)=>{seen={url,body:JSON.parse(options.body)};return new Response('{}');})(request({email:'invited@example.test',type:'email_change'}),{params:Promise.resolve({action:'resend'})});
+  assert.equal(response.status,200);assert.equal(seen.url.pathname,'/auth/v1/resend');
+  assert.equal(seen.url.searchParams.get('redirect_to'),'http://localhost:3000/auth/callback');
+  assert.equal(seen.body.type,'signup');
+});
+test('SDK confirmation resend uses the same-origin relay',async()=>{
+  let seen;
+  const {signupFetch}=load('lib/supabase/signup-fetch.ts');
+  const fetch=signupFetch('https://project.example.test',async(input,init)=>{seen={input,init};return new Response('{}');});
+  await fetch('https://project.example.test/auth/v1/resend',{method:'POST',headers:{apikey:'public-test-key'},body:JSON.stringify({email:'invited@example.test',type:'signup'})});
+  assert.equal(seen.input,'/api/auth/resend');assert.equal(seen.init.headers.apikey,undefined);
+});
+test('an expired recovery callback stays in recovery with relevant guidance',async()=>{
+  const url=new URL('http://localhost:3000/auth/callback?code=used-code&next=/reset-password');
+  const response=await callback({exchangeCodeForSession:async()=>({error:Error('used code')})})({nextUrl:url,url:url.href});
+  assert.equal(response.headers.get('location'),'http://localhost:3000/auth/recovery?error=invalid_link');
+});
+test('a valid legacy recovery PKCE callback still opens password reset',async()=>{
+  const url=new URL('http://localhost:3000/auth/callback?code=valid-code&next=/reset-password');
+  const response=await callback({exchangeCodeForSession:async()=>({error:null})})({nextUrl:url,url:url.href});
+  assert.equal(response.headers.get('location'),'http://localhost:3000/reset-password');
+});
+
+test('provider exchange failures get social sign-in guidance without reflecting external details',async()=>{
+  const url=new URL('http://localhost:3000/auth/callback?error=server_error&error_code=unexpected_failure&error_description=private-provider-detail');
+  const response=await callback({})({nextUrl:url,url:url.href});
+  assert.equal(response.headers.get('location'),'http://localhost:3000/login?auth_error=oauth');
+});
+test('expired OAuth state gets social sign-in guidance',async()=>{
+  const url=new URL('http://localhost:3000/auth/callback?error=invalid_request&error_code=bad_oauth_state');
+  const response=await callback({})({nextUrl:url,url:url.href});
+  assert.equal(response.headers.get('location'),'http://localhost:3000/login?auth_error=oauth');
+});
+test('expired email OTP errors retain email-link guidance',async()=>{
+  const url=new URL('http://localhost:3000/auth/callback?error=access_denied&error_code=otp_expired');
+  const response=await callback({})({nextUrl:url,url:url.href});
+  assert.equal(response.headers.get('location'),'http://localhost:3000/login?auth_error=1');
+});
+test('provider recovery errors retain password-recovery guidance',async()=>{
+  const url=new URL('http://localhost:3000/auth/callback?error=access_denied&error_code=otp_expired&next=/reset-password');
+  const response=await callback({})({nextUrl:url,url:url.href});
+  assert.equal(response.headers.get('location'),'http://localhost:3000/auth/recovery?error=invalid_link');
 });

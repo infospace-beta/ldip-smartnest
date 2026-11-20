@@ -10,6 +10,8 @@ from django.core.exceptions import ImproperlyConfigured
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+# Process variables take precedence; .env supplies the local database settings.
+load_dotenv(BASE_DIR / '.env', override=False)
 load_dotenv(BASE_DIR / '.env.local', override=False)
 
 # One stable, private value must be shared by every process in a deployment.
@@ -97,6 +99,9 @@ MIDDLEWARE = [
     'core.audit_middleware.AuditMiddleware',
 ]
 
+if PRODUCTION:
+    MIDDLEWARE.insert(1, 'whitenoise.middleware.WhiteNoiseMiddleware')
+
 ROOT_URLCONF = 'smartnest_api.urls'
 
 TEMPLATES = [
@@ -127,6 +132,12 @@ DATABASES = {'default': {
     'CONN_MAX_AGE': 60,
     'OPTIONS': {'connect_timeout': 5, 'sslmode': os.getenv('DB_SSLMODE', 'require' if PRODUCTION else 'prefer')},
 }}
+# Keep Django tables outside Supabase's exposed public schema when configured.
+database_schema = os.getenv('DB_SCHEMA', '')
+if database_schema:
+    if not database_schema.isascii() or not database_schema.replace('_', '').isalnum() or not database_schema[0].isalpha():
+        raise ImproperlyConfigured('DB_SCHEMA must start with a letter and contain only ASCII letters, digits or underscores.')
+    DATABASES['default']['OPTIONS']['options'] = f'-c search_path={database_schema}'
 if PRODUCTION and (not DATABASES['default']['PASSWORD'] or not DATABASES['default']['USER']
                    or DATABASES['default']['USER'].lower() in ('postgres', 'root')
                    or DATABASES['default']['OPTIONS']['sslmode'] not in ('require', 'verify-ca', 'verify-full')):
@@ -179,7 +190,7 @@ SUPABASE_URL = os.getenv('SUPABASE_URL', '').rstrip('/')
 SUPABASE_PUBLISHABLE_KEY = os.getenv('SUPABASE_PUBLISHABLE_KEY', '')
 SUPABASE_AUTH_ENABLED = env_bool('SUPABASE_AUTH_ENABLED')
 if PRODUCTION and not SUPABASE_AUTH_ENABLED:
-    raise ImproperlyConfigured('Production requires Supabase authentication with privileged MFA.')
+    raise ImproperlyConfigured('Production requires Supabase authentication.')
 if SUPABASE_AUTH_ENABLED and (
     not SUPABASE_URL.startswith('https://') or not SUPABASE_PUBLISHABLE_KEY
 ):
@@ -241,3 +252,33 @@ LOGGING = {
     'handlers': {'console': {'class': 'logging.StreamHandler'}},
     'loggers': {'core': {'handlers': ['console'], 'level': 'INFO', 'propagate': False}},
 }
+
+
+# Notification SMS is opt-in and stays disabled until a provider is configured.
+# Sign-in OTP provider credentials belong in Supabase Auth, never in browser env.
+SMARTNEST_SMS_ENABLED = env_bool('SMARTNEST_SMS_ENABLED')
+TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID', '')
+TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN', '')
+TWILIO_MESSAGING_SERVICE_SID = os.getenv('TWILIO_MESSAGING_SERVICE_SID', '')
+if SMARTNEST_SMS_ENABLED and not all((TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_SERVICE_SID)):
+    raise ImproperlyConfigured('SMS notifications require complete Twilio credentials.')
+
+
+# Daraja is sandbox-only. Enabling this does not enable real rent settlement.
+DARAJA_SANDBOX_ENABLED = env_bool('DARAJA_SANDBOX_ENABLED')
+DARAJA_ENV = os.getenv('DARAJA_ENV', 'sandbox')
+DARAJA_CONSUMER_KEY = os.getenv('DARAJA_CONSUMER_KEY', '')
+DARAJA_CONSUMER_SECRET = os.getenv('DARAJA_CONSUMER_SECRET', '')
+DARAJA_SHORTCODE = os.getenv('DARAJA_SHORTCODE', '')
+DARAJA_PASSKEY = os.getenv('DARAJA_PASSKEY', '')
+DARAJA_CALLBACK_BASE_URL = os.getenv('DARAJA_CALLBACK_BASE_URL', '').rstrip('/')
+if DARAJA_ENV != 'sandbox':
+    raise ImproperlyConfigured('This integration supports Daraja sandbox only; live payments are not enabled.')
+if DARAJA_SANDBOX_ENABLED:
+    from urllib.parse import urlsplit
+    callback_origin = urlsplit(DARAJA_CALLBACK_BASE_URL)
+    if (not all((DARAJA_CONSUMER_KEY, DARAJA_CONSUMER_SECRET, DARAJA_SHORTCODE, DARAJA_PASSKEY))
+            or callback_origin.scheme != 'https' or not callback_origin.hostname
+            or callback_origin.username or callback_origin.password or callback_origin.path
+            or callback_origin.query or callback_origin.fragment):
+        raise ImproperlyConfigured('Daraja sandbox requires complete credentials and a public HTTPS callback origin.')

@@ -26,7 +26,7 @@ class SupabaseAuthentication(BaseAuthentication):
     def authenticate_header(self, request):
         return 'Bearer'
 
-    def authenticate(self, request):
+    def verified_identity(self, request):
         header = get_authorization_header(request).split()
         if not header or header[0].lower() != b'bearer':
             return None
@@ -54,10 +54,17 @@ class SupabaseAuthentication(BaseAuthentication):
         try:
             subject = UUID(identity['id'])
             email = identity['email']
-            if not email or not identity.get('email_confirmed_at') or identity.get('is_anonymous'):
+            if not isinstance(email, str) or not email or not identity.get('email_confirmed_at') or identity.get('is_anonymous'):
                 raise ValueError('Verified email is required.')
         except (KeyError, TypeError, ValueError) as error:
             raise AuthenticationFailed('A verified email account is required.') from error
+        return subject, email, identity, token
+
+    def authenticate(self, request):
+        verified = self.verified_identity(request)
+        if verified is None:
+            return None
+        subject, email, identity, token = verified
         user = User.objects.filter(supabase_user_id=subject).first()
         if user is None:
             metadata = identity.get('user_metadata')

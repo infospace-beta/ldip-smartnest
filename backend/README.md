@@ -1,5 +1,48 @@
 # SmartNest backend setup
 
+## First-time local startup (Windows)
+
+From `backend`, install dependencies and create your private local signing key:
+
+```powershell
+python -m pip install -r requirements.txt
+python setup_local.py
+```
+
+The helper saves a randomly generated key in the ignored `backend/.env.local`.
+It preserves existing settings and valid keys, and never prints the key. Do not
+copy `.env.example` over this file afterwards; add your real database and
+authentication values to it. Process environment variables take precedence.
+
+Django loads `backend/.env` before `backend/.env.local`; process environment variables take precedence over both files. The local PostgreSQL connection is configured in the ignored `.env`, while the existing signing key and authentication settings stay in `.env.local`.
+
+Configure `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST` and `DB_PORT` for your
+running PostgreSQL instance. Then run:
+
+```powershell
+python manage.py check
+python manage.py migrate
+python manage.py runserver
+```
+
+An error mentioning `DJANGO_SECRET_KEY` means the private configuration is missing
+or invalid; keep the validation in `settings.py`. A database connection error
+means PostgreSQL or its connection settings still need configuration.
+
+### Use Supabase PostgreSQL locally
+
+Run `python setup_supabase_database.py`. In Supabase Dashboard > SmartNest >
+Connect, copy the **Session pooler** host and username (or direct connection if
+your network supports IPv6). Enter your database password at the hidden prompt;
+this is separate from the Auth publishable key. The helper verifies connectivity,
+creates a `smartnest` schema and saves the connection with TLS in `.env.local`.
+`DB_SCHEMA=smartnest` keeps Django tables outside the exposed `public` schema.
+It does not copy existing local data or run migrations. Afterwards run
+`python manage.py migrate` and `python manage.py runserver`.
+
+This is local development configuration. Production still requires the dedicated
+non-superuser database account and other controls in the production runbook.
+
 ## Supabase authentication
 
 Install the pinned dependencies with `python -m pip install -r requirements.txt`. Copy `.env.example` to `.env.local`, set the Supabase publishable key, and keep `SUPABASE_AUTH_ENABLED=true`. The workspace's ignored `.env.local` already selects the SmartNest project `xegzolizugoyuucoixzp`. Process environment variables take precedence. Continue supplying the private `DJANGO_SECRET_KEY` as described below.
@@ -14,7 +57,7 @@ python manage.py link_supabase_user person@example.com <verified-supabase-user-u
 
 This explicit administrative step preserves the user's Django role, tenant linkage and portfolio assignments. It refuses to overwrite an existing different link. Never link identities solely because an untrusted requester supplies a matching email. Team onboarding uses approved account invitations; manual role controls remain available to administrators. No service-role key is needed in the app.
 
-All new accounts require an approved invitation. Tenant invitations are accepted only after check-in and email confirmation in Supabase. Public tokenless legacy signup is rejected. Email-only tenancy linking cannot grant access to historical unverified pending accounts. Production requires Supabase with privileged MFA; the legacy mode remains only for isolated compatibility/testing. Verified Supabase linking invalidates the old local password.
+All new accounts require an approved invitation. Tenant invitations are accepted only after check-in and email confirmation in Supabase. Public tokenless legacy signup is rejected. Email-only tenancy linking cannot grant access to historical unverified pending accounts. Production requires Supabase; authenticator verification is optional per account and enforced after that user enables it; the legacy mode remains only for isolated compatibility/testing. Verified Supabase linking invalidates the old local password.
 
 Set DB_NAME, DB_USER, DB_PASSWORD, DB_HOST and DB_PORT in the ignored local environment; database credentials are no longer in source. For public deployment use the production configuration example and [production runbook](../docs/PRODUCTION_SECURITY.md), including private storage, separate notice encryption keys, supervised services, backup/restore, monitoring and legal release requirements.
 

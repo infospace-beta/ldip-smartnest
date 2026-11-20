@@ -1,4 +1,7 @@
 import Link from "next/link";
+import type {Metadata} from "next";
+import {publicIndexingEnabled,publicSiteOrigin} from "@/lib/public-site";
+export function generateMetadata():Metadata {const enabled=publicIndexingEnabled();return {robots:{index:enabled,follow:enabled},...(enabled?{alternates:{canonical:`${publicSiteOrigin()}/`}}:{})};}
 
 const roles = [
   { title: "Property managers", copy: "Organise properties, units, leases, payments and your team in one workspace." },
@@ -16,7 +19,7 @@ export default function HomePage() {
         </Link>
         <nav aria-label="Main navigation">
           <a href="#how-it-works">How it works</a>
-          <a href="#who-its-for">Who itâ€™s for</a>
+          <a href="#who-its-for">Who it is for</a>
           <Link className="button button-secondary" href="/login">Sign in</Link>
         </nav>
       </header>
@@ -25,7 +28,7 @@ export default function HomePage() {
         <div className="public-hero-copy">
           <div className="page-eyebrow">A calmer way to manage homes</div>
           <h1>Manage your property.<br /><span>Simplify everyday living.</span></h1>
-          <p>SmartNest brings property teams, tenants and maintenance into one clear placeâ€”so everyday work feels easier and everyone knows what comes next.</p>
+          <p>SmartNest brings property teams, tenants and maintenance into one clear place. Everyday work feels easier, and everyone knows what comes next.</p>
           <div className="public-actions">
             <Link className="button button-primary" href="/demo">Try Live Demo</Link>
             <Link className="button button-secondary" href="/get-started">Get Started</Link>

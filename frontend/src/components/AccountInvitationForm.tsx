@@ -5,7 +5,7 @@ import { accountInvitationsAPI } from "@/lib/api";
 import {useRecords} from "@/lib/workflows";
 import InvitationComposer from "@/components/InvitationComposer";
 
-export default function AccountInvitationForm({ manager = false }: { manager?: boolean }) {
+export default function AccountInvitationForm({ manager = false, onCreated }: { manager?: boolean; onCreated?:()=>void|Promise<void> }) {
   const properties=useRecords<{id:number;name:string;owner_id:number|null}>(manager?'/invitation-property-options/':'/properties/');
   const units=useRecords<{id:number;property:number;unit_number:string}>(manager?'/invitation-property-options/':'/units/');
   const [property,setProperty]=useState('');
@@ -34,6 +34,7 @@ export default function AccountInvitationForm({ manager = false }: { manager?: b
         <InvitationComposer key={`${recipient.email}:${recipient.role}`} name={recipient.name} defaultEmail={recipient.email} prepare={async (email) => {
           const { data } = await accountInvitationsAPI.create({ ...recipient, email });
           setCreated(true);
+          await onCreated?.();
           const url = new URL("/join-account", window.location.origin);
           url.searchParams.set("token", data.token);
           return url.toString();

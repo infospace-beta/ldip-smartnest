@@ -1,10 +1,13 @@
 "use client";
 
-import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from "react";
+import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
-import { authAPI, type User, type LoginCredentials, type RegisterData } from "@/lib/api";
+import api, { authAPI, type User, type LoginCredentials, type RegisterData } from "@/lib/api";
 import { createClient } from "@/lib/supabase/client";
 import { authErrorMessage } from "@/lib/supabase/auth-errors";
+import { loadSessionProfile } from "@/lib/session-profile";
+import { signupOutcome } from "@/lib/supabase/signup-outcome";
+import { shouldLoadWorkspaceProfile } from "@/lib/profile-policy";
 
 interface AuthContextType {
   user: User | null;
@@ -12,7 +15,8 @@ interface AuthContextType {
   isAuthenticated: boolean;
   isLoading: boolean;
   login: (credentials: LoginCredentials) => Promise<void>;
-  register: (data: RegisterData) => Promise<{ requiresEmailConfirmation: boolean }>;
+  register: (data: RegisterData) => Promise<{ requiresEmailConfirmation: boolean; mayAlreadyExist: boolean }>;
+  acceptInvitation: (data: LoginCredentials & {consent:boolean; invitation_token?:string; account_invitation_token?:string}) => Promise<void>;
   logout: () => Promise<void>;
   refreshProfile: () => Promise<void>;
 }
@@ -21,6 +25,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
+  const invitationSignIn = useRef(false);
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -31,15 +36,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     ["access_token", "refresh_token", "user"].forEach((key) => localStorage.removeItem(key));
     const { data: { subscription } } = createClient().auth.onAuthStateChange((_event, session) => {
       const current = ++generation;
+      if (invitationSignIn.current && session) return;
       // Run outside the SDK callback, which holds the auth lock.
       window.setTimeout(async () => {
         if (!active || current !== generation) return;
         setIsLoading(true);
-        if (!session) setUser(null);
+        const checkProfile=shouldLoadWorkspaceProfile(window.location.pathname,_event);
+        if (!session || !checkProfile) setUser(null);
         setToken(session?.access_token ?? null);
         try {
-          if (session) {
-            const { data } = await authAPI.me();
+          if (session && checkProfile) {
+            const { data } = await loadSessionProfile(session.access_token);
             if (active && current === generation) setUser(data);
           }
         } catch {
@@ -60,12 +67,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
     if (error) throw new Error(authErrorMessage(error));
     try {
-      const profile = await authAPI.me();
+      const profile = await loadSessionProfile(data.session.access_token);
       setToken(data.session.access_token);
       setUser(profile.data);
     } catch (error) {
       await supabase.auth.signOut();
       throw error;
+    }
+  }, []);
+
+  const acceptInvitation = useCallback(async (input: LoginCredentials & {consent:boolean; invitation_token?:string; account_invitation_token?:string}) => {
+    invitationSignIn.current = true;
+    setIsLoading(true);
+    const supabase = createClient();
+    let signedIn = false;
+    try {
+      const {data,error} = await supabase.auth.signInWithPassword({email:input.email.trim(),password:input.password});
+      if (error) throw new Error(authErrorMessage(error));
+      if (!data.session) throw new Error('A confirmed sign-in session is required.');
+      signedIn = true;
+      const profile = await api.post<User>('/auth/invitations/accept/', {
+        consent:input.consent, invitation_token:input.invitation_token, account_invitation_token:input.account_invitation_token,
+      });
+      setToken(data.session.access_token);
+      setUser(profile.data);
+    } catch (error) {
+      if (signedIn) {await supabase.auth.signOut({scope:'local'});setToken(null);setUser(null);}
+      throw error;
+    } finally {
+      invitationSignIn.current = false;
+      setIsLoading(false);
     }
   }, []);
 
@@ -80,7 +111,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
     });
     if (error) throw new Error(authErrorMessage(error));
-    return { requiresEmailConfirmation: !signup.session };
+    return signupOutcome(signup);
   }, []);
 
   const refreshProfile = useCallback(async () => {
@@ -98,7 +129,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [router]);
 
   return (
-    <AuthContext.Provider value={{ user, token, isAuthenticated: !!token && !!user, isLoading, login, register, logout, refreshProfile }}>
+    <AuthContext.Provider value={{ user, token, isAuthenticated: !!token && !!user, isLoading, login, register, acceptInvitation, logout, refreshProfile }}>
       {children}
     </AuthContext.Provider>
   );

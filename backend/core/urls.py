@@ -2,8 +2,12 @@ from django.conf import settings
 from django.urls import path
 from . import views
 from . import onboarding_backend
+from . import manager_team
 from . import workflow_views as workflow
 from .health import readiness
+from . import daraja_views as daraja
+from .account_security import security_settings
+from .invitation_accept import accept_invitation
 
 urlpatterns = [
     path('health/ready/', readiness, name='readiness'),
@@ -18,6 +22,8 @@ urlpatterns = [
     path('unit-inspections/<int:pk>/photos/<int:photo_pk>/', workflow.inspection_photo),
 
     path('health/', views.health, name='health'),
+    path('team/', manager_team.manager_team, name='manager_team'),
+    path('team/invitations/<uuid:pk>/link/', manager_team.manager_team_invitation_link, name='manager_team_invitation_link'),
     path('account-invitations/', onboarding_backend.account_invitations, name='account_invitations'),
     path('account-invitations/<str:token>/', onboarding_backend.account_invitation_details, name='account_invitation_details'),
     path('properties/<int:pk>/units/<int:unit_pk>/check-in/', onboarding_backend.check_in_unit, name='check_in_unit'),
@@ -27,6 +33,8 @@ urlpatterns = [
     path('tenant-invitations/<str:token>/', views.tenant_invitation_details, name='tenant_invitation_details'),
     path('auth/login/', views.login, name='login'),
     path('auth/me/', views.me, name='me'),
+    path('auth/invitations/accept/', accept_invitation, name='accept_existing_invitation'),
+    path('auth/security/', security_settings, name='account_security'),
     path('users/<int:pk>/avatar/', views.user_avatar, name='user_avatar'),
     path('users/<int:pk>/profile/', views.user_public_profile, name='user_public_profile'),
     path('auth/password/change/', views.change_password, name='change_password'),
@@ -56,6 +64,9 @@ urlpatterns = [
 
     # Payments
     path('payments/', views.payments_list, name='payments_list'),
+    path('payments/mpesa/', daraja.sandbox_payments, name='mpesa_sandbox'),
+    path('payments/mpesa/<uuid:pk>/query/', daraja.sandbox_query, name='mpesa_sandbox_query'),
+    path('payments/mpesa/callback/<uuid:pk>/<uuid:secret>/', daraja.sandbox_callback, name='mpesa_sandbox_callback'),
 
     # Notices
     path('notices/', workflow.notices, name='notices_list'),

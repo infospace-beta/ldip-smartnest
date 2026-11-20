@@ -24,6 +24,9 @@ class Command(BaseCommand):
             close_old_connections()
             try:
                 result = process_automations()
+                if settings.SMARTNEST_SMS_ENABLED:
+                    from core.sms import deliver_notifications
+                    result['sms'] = deliver_notifications()
                 if result.get('failures'):
                     raise CommandError('One or more automation policies failed; inspect policy IDs in the log.')
                 heartbeat = settings.AUTOMATION_HEARTBEAT_PATH

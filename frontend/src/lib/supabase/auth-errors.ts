@@ -9,6 +9,11 @@ export function authErrorMessage(error: { code?: string; message: string }): str
       return "Enter a valid email address that you can receive confirmation messages at.";
     case "email_address_not_authorized":
       return "Email delivery is not configured for this recipient. Ask the administrator to configure the email service.";
+    case "otp_expired":
+      return "This confirmation link or code is invalid, expired, or already used. Use the newest email, or sign in if already confirmed.";
+    case "email_send_failed":
+    case "smtp_error":
+      return "The email service could not send the message. Contact the administrator to check SMTP delivery.";
     case "signup_service_unavailable":
       return "Account creation cannot reach the sign-in service. Please try again shortly.";
     case "over_email_send_rate_limit":

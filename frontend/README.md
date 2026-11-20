@@ -1,5 +1,20 @@
 # SmartNest frontend
 
+## First-time local startup (Windows)
+
+Run these commands from `frontend`:
+
+```powershell
+npm ci
+npm run dev
+```
+
+`'next' is not recognized` means the local dependencies have not been installed
+successfully. `npm ci` installs the versions in `package-lock.json`, including
+Next.js. Let it finish successfully before starting the server; no global Next.js
+installation is needed. In PowerShell, use `npm.cmd` if script policy blocks
+`npm.ps1`.
+
 Next.js app with Supabase sign-in and a Django API. Run `npm ci`, copy `.env.example` to the ignored `.env.local`, configure the API URL, Supabase URL and publishable key, then `npm run dev`. Never expose a secret/service-role key through frontend configuration.
 
 Check with `npm run lint`, `npx tsc --noEmit`, `node --test tests/*.test.cjs` and `npm run build`. Start a built server using `npm run start`. On Windows, if Turbopack cannot use the default temporary folder, set TEMP and TMP to a private writable folder and retry with a fresh build cache.

@@ -27,6 +27,9 @@ def notify(users, title, text, *, important=False, link='', sender=None):
     n = Notice.objects.create(title='', text='', encrypted_content=seal(title, text),
                               important=important, sender=sender, state='delivered', link=link)
     NoticeReceipt.objects.bulk_create([NoticeReceipt(notice=n, user_id=i) for i in ids])
+    # bulk_create bypasses m2m_changed; queue the actual directed-notice workflow too.
+    from .sms import queue_notice_sms
+    queue_notice_sms(sender=None, instance=n, action='post_add', reverse=False, pk_set=ids)
     return n
 
 

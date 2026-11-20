@@ -1,0 +1,48 @@
+# Review paid plans, region and environment values before importing into Render.
+services:
+  - type: web
+    name: smartnest-api
+    runtime: python
+    plan: starter
+    numInstances: 1
+    buildCommand: pip install -r backend/requirements.txt && python backend/manage.py collectstatic --noinput
+    startCommand: python -B deploy/render-start.py
+    healthCheckPath: /api/health/ready/
+    disk:
+      name: smartnest-private-media
+      mountPath: /var/data
+      sizeGB: 10
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.14.0
+      - key: DJANGO_ENV
+        value: production
+      - key: DEBUG
+        value: 'false'
+      - key: DJANGO_TRUST_PROXY_HTTPS
+        value: 'true'
+      - key: DJANGO_MEDIA_ROOT
+        value: /var/data/media
+      - key: DJANGO_STATIC_ROOT
+        value: /opt/render/project/src/staticfiles
+      - key: AUTOMATION_HEARTBEAT_PATH
+        value: /var/data/worker/heartbeat
+      - key: SMARTNEST_SMS_ENABLED
+        value: 'false'
+      - key: DARAJA_SANDBOX_ENABLED
+        value: 'false'
+      - key: DJANGO_SECRET_KEY
+        sync: false
+      - key: NOTICE_ENCRYPTION_KEYS
+        sync: false
+      - key: DJANGO_ALLOWED_HOSTS
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: DJANGO_CORS_ORIGINS
+        sync: false
+      - key: DJANGO_CSRF_ORIGINS
+        sync: false
+# Set DB_*, Supabase and SMTP variables from .env.production.example in Render.
+# Provision managed PostgreSQL separately and run migrations using its maintenance
+# identity before starting this service. No database or paid resource is created here.

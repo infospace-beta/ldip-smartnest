@@ -108,7 +108,7 @@ class WorkflowTests(TestCase):
         import base64,json
         from uuid import uuid4
         from django.test import override_settings
-        self.manager.supabase_user_id=uuid4();self.manager.save()
+        self.manager.supabase_user_id=uuid4();self.manager.mfa_enabled=True;self.manager.save()
         def token(aal,subject=None):
             data=base64.urlsafe_b64encode(json.dumps({'sub':str(subject or self.manager.supabase_user_id),'aal':aal}).encode()).decode().rstrip('=')
             return f'verified-by-authentication.{data}.signature'

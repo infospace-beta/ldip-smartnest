@@ -14,6 +14,6 @@ class Command(BaseCommand):
         if not options['quiesced']:
             raise CommandError('Pause application writes/uploads, then pass --quiesced. Database and media need a consistent snapshot.')
         result = make_backup(options['output'], allow_missing=options['allow_missing'])
-        self.stdout.write(self.style.SUCCESS(f"Encrypted backup created; {result['included']} referenced uploads included."))
+        self.stdout.write(self.style.SUCCESS(f"Encrypted backup created; {result['included']} stored uploads included."))
         if result['missing']:
             self.stderr.write(self.style.WARNING(f"Incomplete source media: {result['missing']} missing references recorded in encrypted manifest. No database references changed."))

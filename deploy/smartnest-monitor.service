@@ -1,0 +1,17 @@
+[Unit]
+OnFailure=smartnest-alert@%n.service
+Description=Check SmartNest API, worker and backup freshness
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=smartnest
+WorkingDirectory=/opt/smartnest/backend
+EnvironmentFile=/etc/smartnest/backend.env
+EnvironmentFile=/etc/smartnest/monitor.env
+ExecStart=/opt/smartnest/.venv/bin/python -B manage.py check_operations --host ${SMARTNEST_API_HOST} --backup-dir /var/lib/smartnest/backups --require-offsite
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict

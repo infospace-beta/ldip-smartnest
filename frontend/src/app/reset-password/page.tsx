@@ -7,15 +7,20 @@ import { useRouter } from "next/navigation";
 import { Suspense, useEffect, useState, type FormEvent } from "react";
 import { authAPI } from "@/lib/api";
 import { createClient } from "@/lib/supabase/client";
+import {withSessionDeadline} from "@/lib/request-deadline";
 
 function ResetPasswordFormPage() {
   const router = useRouter();
   const [validSession, setValidSession] = useState<boolean | null>(null);
   useEffect(() => {
     let active = true;
-    void createClient().auth.getUser().then(({ data, error }) => {
-      if (active) setValidSession(!error && !!data.user);
-    }).catch(() => { if (active) setValidSession(false); });
+    void (async()=>{
+      const auth=createClient().auth;
+      const {data:session,error:sessionError}=await withSessionDeadline(auth.getSession());
+      if(sessionError||!session.session){if(active)setValidSession(false);return;}
+      const {data,error}=await withSessionDeadline(auth.getUser());
+      if(active)setValidSession(!error&&!!data.user);
+    })().catch(()=>{if(active)setValidSession(false);});
     return () => { active = false; };
   }, []);
   const [error, setError] = useState("");
@@ -64,7 +69,7 @@ function ResetPasswordFormPage() {
           <div className="page-eyebrow">Secure account recovery</div>
           <h2>Reset your password</h2>
           {validSession === null ? <div role="status">Checking your reset link…</div> : !validSession ? (
-            <div className="auth-message" role="alert">This reset link is incomplete. <Link href="/forgot-password">Request another link</Link>.</div>
+            <div className="auth-message" role="alert">A verified reset session is required. <Link href="/auth/recovery">Enter the code from your newest email</Link> or <Link href="/forgot-password">request another reset email</Link>.</div>
           ) : (
             <>
               <p className="auth-description">Create a new password for your SmartNest account.</p><p><Link href="/security?next=/reset-password">Verify your authenticator if your account requires it</Link></p>

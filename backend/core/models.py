@@ -12,6 +12,16 @@ class User(AbstractUser):
         ('maintenance', 'Maintenance'),
     ]
 
+    mfa_enabled = models.BooleanField(default=False)
+    security_prompt_dismissed = models.BooleanField(default=False)
+    secondary_email = models.EmailField(blank=True)
+    secondary_email_verified_at = models.DateTimeField(null=True, blank=True)
+    pending_secondary_email = models.EmailField(blank=True)
+    secondary_code_digest = models.CharField(max_length=64, blank=True)
+    secondary_code_expires_at = models.DateTimeField(null=True, blank=True)
+    secondary_code_attempts = models.PositiveSmallIntegerField(default=0)
+    sms_notifications = models.BooleanField(default=False)
+    sms_verified_phone = models.CharField(max_length=16, blank=True, editable=False)
     email = models.EmailField(unique=True)
     supabase_user_id = models.UUIDField(unique=True, null=True, blank=True, editable=False)
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='tenant')
@@ -493,3 +503,38 @@ class InspectionPhoto(models.Model):
     inspection = models.ForeignKey(UnitInspection, on_delete=models.CASCADE, related_name='photos')
     image = models.FileField(upload_to='inspection-photos/%Y/%m/')
     caption = models.CharField(max_length=200, blank=True)
+
+
+class SMSNotification(models.Model):
+    notice = models.ForeignKey(Notice, on_delete=models.CASCADE)
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    status = models.CharField(max_length=16, default='pending', choices=[
+        ('pending', 'Pending'), ('sending', 'Sending'), ('accepted', 'Accepted by provider'),
+        ('failed', 'Rejected by provider'), ('unknown', 'Unknown; review before retry'), ('skipped', 'Skipped'),
+    ])
+    provider_sid = models.CharField(max_length=64, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['notice', 'user'], name='unique_notice_user_sms')]
+
+
+class SandboxPaymentAttempt(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    requested_by = models.ForeignKey(User, on_delete=models.PROTECT)
+    tenant = models.ForeignKey(Tenant, on_delete=models.PROTECT)
+    idempotency_key = models.UUIDField()
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    phone = models.CharField(max_length=12)
+    status = models.CharField(max_length=24, default='initializing', choices=[
+        ('initializing','Initializing'), ('pending','Pending'), ('querying','Checking status'),
+        ('sandbox_success','Sandbox success'), ('sandbox_failed','Sandbox failed'), ('unknown','Unknown; review first'),
+    ])
+    checkout_request_id = models.CharField(max_length=128, unique=True, null=True, blank=True)
+    merchant_request_id = models.CharField(max_length=128, blank=True)
+    callback_secret = models.UUIDField(default=uuid.uuid4, editable=False)
+    callback_received = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['requested_by','idempotency_key'], name='unique_user_sandbox_payment_request')]

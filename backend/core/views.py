@@ -55,7 +55,7 @@ class SmartNestAuthenticated(IsAuthenticated):
             return False
         if not request.user.is_active_user:
             raise AuthenticationFailed('This account has been disabled.')
-        if settings.SUPABASE_AUTH_ENABLED and request.user.role in ('admin','manager'):
+        if settings.SUPABASE_AUTH_ENABLED and request.user.mfa_enabled:
             from .workflow_auth import requires_mfa
             from rest_framework.exceptions import PermissionDenied
             if requires_mfa(request):
@@ -190,7 +190,8 @@ def can_contact(sender, recipient):
     if sender.role == 'admin':
         return True
     if recipient.role == 'admin':
-        return sender.role == 'manager' or Conversation.objects.filter(participants=sender).filter(participants=recipient).exists()
+        # Every active workspace role can request administrator support.
+        return sender.role in ('manager', 'tenant', 'staff', 'maintenance')
     if sender.role == 'manager':
         return (
             recipient.role != 'admin'

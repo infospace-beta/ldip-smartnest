@@ -1,201 +1,65 @@
 "use client";
-
+import {Suspense, useState, type FormEvent} from "react";
+import Link from "next/link";
+import {useRouter, useSearchParams} from "next/navigation";
+import {useAuth} from "@/contexts/AuthContext";
+import {getApiErrorMessage} from "@/lib/api";
 import SignInOptions from "@/components/SignInOptions";
 import PasswordInput from "@/components/PasswordInput";
-
-import { Suspense, useState, type FormEvent } from "react";
-import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
-import { useAuth } from "@/contexts/AuthContext";
-import { API_BASE_URL } from "@/lib/api";
 import Icon from "@/components/Icon";
-
-function messageFrom(error: unknown, fallback: string) {
-  if (typeof error === "object" && error !== null && "response" in error) {
-    const response = (error as { response?: { data?: unknown; status?: number } }).response;
-    const data = response?.data;
-    if (response?.status && response.status >= 500) {
-      return `The SmartNest server returned an error (${response.status}). Check the Django backend terminal for details.`;
-    }
-    if (typeof data === "string") return data;
-    if (typeof data === "object" && data !== null) {
-      const values = Object.values(data as Record<string, unknown>).flatMap((value) =>
-        Array.isArray(value) ? value : [value],
-      );
-      const message = values.find((value): value is string => typeof value === "string");
-      if (message) return message;
-    }
-  }
-  if (typeof error === "object" && error !== null) {
-    const requestError = error as { code?: string; request?: unknown };
-    if (requestError.code === "ERR_NETWORK" || requestError.request) {
-      return `Cannot reach the SmartNest API at ${API_BASE_URL}. Start the Django backend and try again.`;
-    }
-  }
-  return error instanceof Error ? error.message : fallback;
-}
+import {sendMagicLink} from "@/lib/signin-actions";
 
 function LoginFormPage() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const { login, register } = useAuth();
-  const [creatingAccount, setCreatingAccount] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState(
-    searchParams.get("password_changed") === "1"
-      ? "Your password has been updated. Sign in with your new password."
-      : searchParams.get("auth_error") === "1" ? "This confirmation link is invalid or expired. Please sign in or request a new link." : "",
-  );
-
-  const handleLogin = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setLoading(true);
-    setError("");
-    setSuccess("");
+  const router = useRouter(), params = useSearchParams(), {login} = useAuth();
+  const [busy, setBusy] = useState(false), [error, setError] = useState('');
+  const [mode, setMode] = useState<'password'|'magic'>('password'), [message, setMessage] = useState('');
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault(); setBusy(true); setError(''); setMessage('');
     const form = new FormData(event.currentTarget);
-    document.cookie=`sn-trusted=${form.get('trusted')==='on'?'1':'0'}; Path=/; SameSite=Lax${form.get('trusted')==='on'?'; Max-Age=604800':''}`;
+    document.cookie = `sn-trusted=${form.get('trusted') === 'on' ? '1' : '0'}; Path=/; SameSite=Lax${location.protocol === 'https:' ? '; Secure' : ''}${form.get('trusted') === 'on' ? '; Max-Age=604800' : ''}`;
     try {
-      await login({
-        email: String(form.get("email") ?? ""),
-        password: String(form.get("password") ?? ""),
-      });
-      const next = searchParams.get("next");
-      router.replace(next && /^\/dashboard(?:[/?]|$)/.test(next) ? next : "/dashboard");
-      router.refresh();
-    } catch (requestError) {
-      setError(messageFrom(requestError, "We couldn’t sign you in. Check your details and try again."));
-    } finally {
-      setLoading(false);
-    }
+      if (mode === 'magic') {
+        await sendMagicLink(String(form.get('email')), location.origin);
+        setMessage('If this email has an account, check your inbox for a sign-in link or code. Use only the newest email.');
+        return;
+      }
+      await login({email: String(form.get('email')), password: String(form.get('password'))});
+      const next = params.get('next');
+      router.replace(next && /^\/dashboard(?:[/?]|$)/.test(next) ? next : '/dashboard'); router.refresh();
+    } catch (e) {setError(getApiErrorMessage(e, 'We could not sign you in. Check your details and try again.'));}
+    finally {setBusy(false);}
   };
-
-  const handleRegister = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const formElement = event.currentTarget;
-    setLoading(true);
-    setError("");
-    setSuccess("");
-    const form = new FormData(event.currentTarget);
-    const fullName = String(form.get("name") ?? "").trim();
-    const password = String(form.get("new_password1") ?? "");
-    if (password !== String(form.get("new_password2") ?? "")) {
-      setError("The passwords don’t match.");
-      setLoading(false);
-      return;
-    }
-
-    try {
-      const result = await register({
-        email: String(form.get("email") ?? ""),
-        username: fullName.replace(/\s+/g, "."),
-        password,
-        role: "tenant",
-        phone: String(form.get("phone") ?? ""),
-        consent: form.get("consent") === "on",
-      });
-      formElement.reset();
-      setCreatingAccount(false);
-      setSuccess(result.requiresEmailConfirmation
-        ? "Check your email to confirm your account, then sign in. Your manager must link your tenant record before portal access is granted."
-        : "Account created. Sign in to check your tenant access. Your manager must link your tenancy before your workspace becomes available.");
-    } catch (requestError) {
-      setError(messageFrom(requestError, "We couldn’t create your account. Please try again."));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const switchMode = () => {
-    router.push("/get-started");
-    return;
-  };
-
-  return (
-    <main className="auth-page">
-      <div className="auth-layout">
-        <aside className="auth-story">
-          <Link className="brand" href="/">
-            <span className="brand-mark">S</span>
-            <span><span className="brand-name">SmartNest</span><span className="brand-caption">Property operations</span></span>
-          </Link>
-          <div className="auth-story-copy">
-            <div className="page-eyebrow">A calmer way to manage homes</div>
-            <h1>Good spaces. Better managed.</h1>
-            <p>Bring the everyday work of property management into one clear, connected workspace.</p>
-            <div className="auth-benefits">
-              <div className="auth-benefit"><span className="metric-icon"><Icon name="properties" /></span>Know every home, unit and lease</div>
-              <div className="auth-benefit"><span className="metric-icon"><Icon name="payments" /></span>Keep payments and records together</div>
-              <div className="auth-benefit"><span className="metric-icon"><Icon name="maintenance" /></span>Move maintenance work forward</div>
-            </div>
-          </div>
-          <div className="auth-foot">SmartNest Homes · Property operations, made clearer.</div>
-        </aside>
-        <section className="auth-content" aria-live="polite">
-          <div className="page-eyebrow">{creatingAccount ? "Get started" : "Welcome back"}</div>
-          <h2>{creatingAccount ? "Create your account" : "Sign in to SmartNest"}</h2>
-          <p className="auth-description">
-            {creatingAccount
-              ? "Create a tenant account to access your SmartNest workspace."
-              : "Use your account details to continue to your property workspace."}
-          </p>
-          {error && <div className="auth-message" role="alert">{error}</div>}
-          {success && <div className="auth-message success" role="status">{success}</div>}
-          <form className="auth-form" onSubmit={creatingAccount ? handleRegister : handleLogin}>
-            {creatingAccount && (
-              <>
-                <div className="field">
-                  <label htmlFor="account-name">Full name</label>
-                  <input className="auth-input" id="account-name" name="name" autoComplete="name" maxLength={150} required placeholder="Your name" />
-                </div>
-                <div className="field">
-                  <label htmlFor="account-phone">Phone number</label>
-                  <input className="auth-input" id="account-phone" name="phone" type="tel" autoComplete="tel" maxLength={20} required placeholder="+254 7xx xxx xxx" />
-                </div>
-              </>
-            )}
-            <div className="field">
-              <label htmlFor="account-email">Email address</label>
-              <input className="auth-input" id="account-email" name="email" type="email" autoComplete="email" maxLength={254} required placeholder="you@example.com" />
-            </div>
-            <div className="field">
-              <label htmlFor="account-password">Password</label>
-              <PasswordInput className="auth-input" id="account-password" name={creatingAccount ? "new_password1" : "password"} autoComplete={creatingAccount ? "new-password" : "current-password"} minLength={creatingAccount ? 8 : 1} required placeholder={creatingAccount ? "Create a strong password" : "Enter your password"} />
-            </div>
-            {creatingAccount && (
-              <div className="field">
-                <label htmlFor="account-confirm-password">Confirm password</label>
-                <PasswordInput className="auth-input" id="account-confirm-password" name="new_password2" autoComplete="new-password" minLength={8} required placeholder="Repeat your password" />
-              </div>
-            )}
-            {creatingAccount && (
-              <label className="consent-row">
-                <input name="consent" type="checkbox" required />
-                <span>I agree to SmartNest storing the account and contact details needed to manage my tenancy.</span>
-              </label>
-            )}
-            {!creatingAccount && <label className="consent-row"><input type="checkbox" name="trusted" onChange={e=>{document.cookie=`sn-trusted=${e.target.checked?'1':'0'}; Path=/; SameSite=Lax${e.target.checked?'; Max-Age=604800':''}`;}}/><span>Stay signed in on this trusted device</span></label>}
-            <button className="button button-primary auth-submit" type="submit" disabled={loading}>
-              {loading ? "Please wait…" : creatingAccount ? "Create account" : "Sign in"}
-            </button>
-          </form>
-          {!creatingAccount && <SignInOptions />}
-          {!creatingAccount && <Link className="forgot-password-link" href="/forgot-password">Forgot your password?</Link>}
-          <div className="auth-switch">
-            {creatingAccount ? "Already have an account? " : "New to SmartNest? "}
-            <button type="button" onClick={switchMode}>{creatingAccount ? "Sign in" : "Get an invitation"}</button>
-          </div>
-          <p className="auth-note">Your sign-in and account details are verified by the SmartNest service.</p>
-        </section>
+  return <main className="signin-page">
+    <aside className="signin-story">
+      <Link className="brand" href="/"><span className="brand-mark">S</span><span className="brand-name">SmartNest</span></Link>
+      <div><span className="page-eyebrow">A place for everything</span><h1>Good spaces.<br/>Better managed.</h1><p>Your homes, people and everyday property work, together in one clear workspace.</p>
+        <div className="signin-story-feature"><Icon name="properties"/><span>Every property. Every detail.</span></div>
+        <div className="signin-story-feature"><Icon name="payments"/><span>Payments and records, connected.</span></div>
+        <div className="signin-story-feature"><Icon name="maintenance"/><span>A little less work. A lot more clarity.</span></div>
+      </div><span className="signin-story-footer">Property operations, made clearer.</span>
+    </aside>
+    <section className="signin-main" aria-labelledby="signin-heading">
+      <div className="signin-card"><Link className="signin-mobile-brand brand" href="/"><span className="brand-mark">S</span>SmartNest</Link>
+        <span className="page-eyebrow">Welcome back</span><h2 id="signin-heading">Sign in to SmartNest</h2><p className="signin-description">Your workspace is ready when you are.</p>
+        {params.get('password_changed') === '1' && <p className="auth-message success" role="status">Password updated. Sign in with your new password.</p>}
+        {params.get('auth_error') === 'oauth' && <p className="auth-message" role="alert">Social sign-in could not be completed. Try again. If it keeps failing, contact your administrator to check the sign-in provider settings.</p>}
+        {params.get('auth_error') === '1' && <p className="auth-message" role="alert">This link is invalid, expired, already used, or was opened in a different browser. If your email is already confirmed, sign in with your password. Otherwise reopen your invitation and request a new confirmation email.</p>}
+        {error && <p role="alert" className="auth-message">{error}</p>}
+        {message && <p className="auth-message success" role="status">{message}</p>}
+        {mode === 'magic' && <p className="signin-invitation"><Link href="/auth/magic-link">Already have a sign-in code? Enter it here</Link></p>}
+        <SignInOptions/>
+        <div className="signin-divider"><span>or use your email</span></div>
+        <form className="auth-form signin-password-form" onSubmit={submit}>
+          <div className="field"><label htmlFor="account-email">Email address</label><input className="auth-input" id="account-email" name="email" type="email" autoComplete="username" maxLength={254} required placeholder="you@example.com"/></div>
+          {mode === 'password' && (<div className="field"><div className="signin-password-label"><label htmlFor="account-password">Password</label><Link href="/forgot-password">Forgot password?</Link></div><PasswordInput className="auth-input" id="account-password" name="password" autoComplete="current-password" required placeholder="Enter your password"/></div>)}
+          <label className="signin-remember"><input name="trusted" type="checkbox"/> Keep me signed in on this device</label>
+          <button className="button button-primary" disabled={busy}><Icon name={mode === "magic" ? "message" : "login"}/>{busy ? (mode === "magic" ? "Sending link..." : "Signing in...") : mode === "magic" ? "Email me a sign-in link" : "Sign in"}</button>
+        </form>
+        <button className="signin-text-button signin-magic-toggle" type="button" disabled={busy} onClick={() => {setMode(mode === 'password' ? 'magic' : 'password'); setError(''); setMessage('');}}><Icon name={mode === 'password' ? 'message' : 'login'}/>{mode === 'password' ? 'Sign in with a magic link instead' : 'Sign in with a password instead'}</button>
+        <p className="signin-invitation">New to SmartNest? <Link href="/get-started">Join with an invitation</Link></p>
+        <p className="signin-security-note"><Icon name="settings"/> Once you’re in, add an authenticator and backup email in Settings.</p>
       </div>
-    </main>
-  );
+    </section>
+  </main>;
 }
-
-export default function LoginPage() {
-  return (
-    <Suspense fallback={<main className="auth-page"><div className="loading-state" role="status">Loading sign in…</div></main>}>
-      <LoginFormPage />
-    </Suspense>
-  );
-}
+export default function LoginPage() {return <Suspense fallback={<main className="signin-page" role="status">Loading sign-in…</main>}><LoginFormPage/></Suspense>;}

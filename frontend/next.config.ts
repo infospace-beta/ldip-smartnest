@@ -22,7 +22,7 @@ const nextConfig: NextConfig = {
       { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
       { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
       ...(production ? [{ key: "Strict-Transport-Security", value: "max-age=31536000" }] : []),
-    ] }];
+    ] }, {source:'/auth/:flow(confirm|recovery|magic-link)',headers:[{key:'Referrer-Policy',value:'no-referrer'},{key:'Cache-Control',value:'private, no-store'}]}];
   },
   /* config options here */
   cacheComponents: true,

@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import Icon from "@/components/Icon";
 import UserAvatar from "@/components/UserAvatar";
+import SecurityRecommendation from "@/components/SecurityRecommendation";
 
 type NavItem = { label: string; href: string; icon: string; roles: string[]; section: string };
 
@@ -21,12 +22,12 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Check-in & check-out", href: "/dashboard/tenancy-events", icon: "calendar", roles: ["manager", "staff"], section: "Operations" },
   { label: "Automations", href: "/dashboard/automations", icon: "settings", roles: ["manager"], section: "Operations" },
   { label: "Security", href: "/security", icon: "settings", roles: ["admin", "manager", "tenant", "staff", "maintenance"], section: "Account" },
-  { label: "Team onboarding", href: "/dashboard/team", icon: "staff", roles: ["manager"], section: "Operations" },
+  { label: "My team", href: "/dashboard/team", icon: "staff", roles: ["manager"], section: "Operations" },
   { label: "Inspections", href: "/dashboard/unit-inspections", icon: "inspections", roles: ["manager", "staff", "tenant"], section: "Operations" },
   { label: "Notices", href: "/dashboard/notices", icon: "notices", roles: ["admin", "manager", "staff", "tenant", "maintenance"], section: "Operations" },
   { label: "Communications", href: "/dashboard/messages", icon: "notices", roles: ["admin", "manager", "staff", "tenant", "maintenance"], section: "Communications" },
   { label: "Users & access", href: "/dashboard/staff", icon: "staff", roles: ["admin"], section: "Administration" },
-  { label: "Settings", href: "/dashboard/settings", icon: "settings", roles: ["admin"], section: "Administration" },
+  { label: "Settings", href: "/dashboard/settings", icon: "settings", roles: ["admin", "manager", "tenant", "staff", "maintenance"], section: "Account" },
   { label: "Help & support", href: "/dashboard/help", icon: "help", roles: ["admin", "manager", "tenant", "staff", "maintenance"], section: "Account" },
   { label: "My profile", href: "/dashboard/profile", icon: "profile", roles: ["admin", "manager", "tenant", "staff", "maintenance"], section: "Account" },
 ];
@@ -164,7 +165,7 @@ function DashboardShell({ children }: { children: ReactNode }) {
             <button className="icon-button" aria-label="Sign out" onClick={logout}><Icon name="logout" /></button>
           </div>
         </header>
-        <main className="content">{children}</main>
+        <main className="content"><SecurityRecommendation/>{children}</main>
       </div>
       <nav className="mobile-nav" aria-label="Mobile navigation">{renderNav(visibleItems.slice(0, 5))}</nav>
     </div>
