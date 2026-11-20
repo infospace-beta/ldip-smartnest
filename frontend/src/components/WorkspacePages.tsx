@@ -1239,7 +1239,7 @@ export function RecordsPage({ page }: { page: string }) {
             {!selectedTenant.account_linked && user && ["manager", "staff"].includes(user.role) && (
               <div className="tenant-invitation-panel">
                 <h3>Share an account invitation</h3>
-                {selectedTenant.can_invite ? <InvitationComposer key={String(selectedTenant.id)} name={String(selectedTenant.name)} defaultEmail={String(selectedTenant.invitation_email ?? "")} prepare={async (email) => {
+                {selectedTenant.can_invite ? <InvitationComposer key={String(selectedTenant.id)} name={String(selectedTenant.name)} defaultEmail={String(selectedTenant.invitation_email ?? "")} defaultPhone={String(selectedTenant.phone ?? "")} prepare={async (email) => {
                   const { data } = await tenantsAPI.invite(Number(selectedTenant.id), email);
                   const url = new URL("/join", window.location.origin);
                   url.searchParams.set("token", data.token);
