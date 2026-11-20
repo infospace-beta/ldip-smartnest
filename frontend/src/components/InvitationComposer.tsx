@@ -1,29 +1,7 @@
 "use client";
-import {useRef,useState,type FormEvent} from 'react';
-import {getApiErrorMessage} from '@/lib/api';
-import InvitationShare from '@/components/InvitationShare';
-
-<<<<<<< HEAD
-export default function InvitationComposer({name,defaultEmail='',prepare}:{name:string;defaultEmail?:string;prepare:(email:string)=>Promise<string>}) {
-  const [email,setEmail]=useState(defaultEmail),[busy,setBusy]=useState(false),[error,setError]=useState(''),[link,setLink]=useState('');
-  const inFlight=useRef(false);
-  const prepareLink=async(event:FormEvent<HTMLFormElement>)=>{
-    event.preventDefault();if(inFlight.current||link)return;inFlight.current=true;setBusy(true);setError('');
-    try{setLink(await prepare(email.trim().toLowerCase()));}
-    catch(e){setError(getApiErrorMessage(e,'Could not prepare the invitation. Please try again.'));}
-    finally{inFlight.current=false;setBusy(false);}
-  };
-  return <form className="invitation-composer" onSubmit={prepareLink}>
-    <label className="field"><span>Recipient email</span><input type="email" required maxLength={254} autoComplete="email" value={email} disabled={busy||Boolean(link)} onChange={e=>setEmail(e.target.value)}/></label>
-    <p className="panel-description">Create the registration link for {name}, then share it by email, WhatsApp or SMS.</p>
-    {!link&&<div><button className="button button-primary" type="submit" disabled={busy}>{busy?'Preparing...':'Create invitation link'}</button></div>}
-    {link&&<div className="hint-card invite-link-card"><strong>Invitation link ready</strong><InvitationShare link={link} email={email} name={name}/><small>This one-time invitation is valid for seven days from creation.</small></div>}
-    {error&&<p role="alert" className="form-error">{error}</p>}
-  </form>;
-=======
 import { useRef, useState, type FormEvent } from "react";
 import { getApiErrorMessage } from "@/lib/api";
-import { invitationEmailCompose, invitationMessage, invitationWhatsApp, type InvitationEmailProvider } from "@/lib/invitation-compose";
+import { invitationEmailCompose, invitationMessage, invitationWhatsApp, localOnlyInvitation, type InvitationEmailProvider } from "@/lib/invitation-compose";
 
 export default function InvitationComposer({ name, defaultEmail = "", defaultPhone = "", prepare }: {
   name: string;
@@ -124,11 +102,11 @@ export default function InvitationComposer({ name, defaultEmail = "", defaultPho
           <a className="button button-secondary" href={whatsappLink} target="_blank" rel="noopener noreferrer">WhatsApp</a>
         </div>
       </>}
+      {link && localOnlyInvitation(link) && <p className="auth-message" role="note">This link uses localhost and works only on this computer. A public HTTPS site address is needed to share access with people on other devices.</p>}
       {copied && <p className="form-message" role="status">Invitation link copied.</p>}
       {copyError && <p className="form-error" role="alert">{copyError}</p>}
       {shareStatus && <p className="form-message" role="status">{shareStatus}</p>}
       {error && <p className="form-error" role="alert">{error}</p>}
     </form>
   );
->>>>>>> 21a14bdc76b11a75d3ba298f4d8e78966aa7d44d
 }

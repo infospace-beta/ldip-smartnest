@@ -31,3 +31,37 @@ test('localhost links are distinguished from shareable site addresses',()=>{
   assert.equal(output.localOnlyInvitation('http://localhost:3000/join?token=test'),true);
   assert.equal(output.localOnlyInvitation(link),false);
 });
+
+test('all email services preserve the recipient and invitation token',()=>{
+  const origins={gmail:'https://mail.google.com',outlook:'https://outlook.office.com',yahoo:'https://compose.mail.yahoo.com'};
+  for(const provider of ['gmail','outlook','yahoo','default']){
+    const draft=new URL(output.invitationEmailCompose(provider,' PERSON@EXAMPLE.TEST ','Person',link));
+    if(provider==='default'){
+      assert.equal(draft.protocol,'mailto:');
+      assert.equal(decodeURIComponent(draft.pathname),'person@example.test');
+    }else{
+      assert.equal(draft.origin,origins[provider]);
+      assert.equal(draft.searchParams.get('to'),'person@example.test');
+    }
+    assert.ok(draft.searchParams.get('body').includes(link));
+    assert.equal(draft.searchParams.get(provider==='gmail'?'su':'subject'),'Your SmartNest invitation');
+  }
+});
+
+test('direct WhatsApp drafts normalize phone numbers and fall back to recipient selection',()=>{
+  const direct=new URL(output.invitationWhatsApp('+254 (712) 345-678','Person',link));
+  assert.equal(direct.origin,'https://wa.me');
+  assert.equal(direct.pathname,'/254712345678');
+  assert.ok(direct.searchParams.get('text').includes(link));
+  for(const phone of ['', '0712345678', '+254abc', '123']){
+    assert.equal(new URL(output.invitationWhatsApp(phone,'Person',link)).pathname,'/');
+  }
+});
+
+test('merged sharing helpers retain link and recipient validation',()=>{
+  for(const provider of ['gmail','outlook','yahoo','default']){
+    assert.throws(()=>output.invitationEmailCompose(provider,'person@example.test\r\nBcc:other@example.test','Person',link));
+    assert.throws(()=>output.invitationEmailCompose(provider,'person@example.test','Person','javascript:alert(1)'));
+  }
+  assert.throws(()=>output.invitationWhatsApp('+254712345678','Person','https://smartnest.example/dashboard?token=test'));
+});
