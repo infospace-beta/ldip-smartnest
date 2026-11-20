@@ -71,7 +71,7 @@ function TenantCheckIn({ unit, onSaved, onBack }: { unit: Unit; onSaved: () => P
     {step === 3 && tenant && <>
       <div className="auth-message success" role="status">{tenant.name} is checked in. House {unit.unit_number} is now occupied.</div>
       {tenant.account_linked ? <p>The existing account is linked. The tenant can sign in with their usual credentials; no new password or registration is needed.</p> : <><h3>Send the registration invitation</h3>
-      <InvitationComposer name={tenant.name} defaultEmail={details.email} prepare={async (email) => {
+      <InvitationComposer name={tenant.name} defaultEmail={details.email} defaultPhone={details.phone} prepare={async (email) => {
         const { data } = await tenantsAPI.invite(tenant.id, email);
         const url = new URL("/join", window.location.origin);
         url.searchParams.set("token", data.token);

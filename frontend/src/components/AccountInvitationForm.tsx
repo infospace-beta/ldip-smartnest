@@ -31,7 +31,7 @@ export default function AccountInvitationForm({ manager = false }: { manager?: b
         <div className="form-actions"><button className="button button-primary" type="submit">Continue to invitation</button></div>
       </form> : <>
         <p><strong>{recipient.name}</strong> · {recipient.role}</p>
-        <InvitationComposer key={`${recipient.email}:${recipient.role}`} name={recipient.name} defaultEmail={recipient.email} prepare={async (email) => {
+        <InvitationComposer key={`${recipient.email}:${recipient.role}`} name={recipient.name} defaultEmail={recipient.email} defaultPhone={recipient.phone} prepare={async (email) => {
           const { data } = await accountInvitationsAPI.create({ ...recipient, email });
           setCreated(true);
           const url = new URL("/join-account", window.location.origin);
