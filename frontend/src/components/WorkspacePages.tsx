@@ -1,5 +1,7 @@
 "use client";
 
+import {operator} from "@/lib/operator";
+import {matchesSearch} from "@/components/RecordFilters";
 import AccessibleDialog from "@/components/AccessibleDialog";
 import PasswordInput from "@/components/PasswordInput";
 import TeamDirectory from "@/components/TeamDirectory";
@@ -124,62 +126,6 @@ const propertyForm: CreateForm = {
     { name: "photo_url", label: "Photo URL", type: "url", full: true, placeholder: "https://..." },
   ],
   create: (values) => propertiesAPI.create({ ...values, total_units: numberValue(values, "total_units") }),
-};
-
-const unitForm: CreateForm = {
-  title: "Add a unit",
-  submitLabel: "Save unit",
-  allowedRoles: ["admin", "manager"],
-  fields: [
-    { name: "property", label: "Property", type: "select", required: true, options: (refs) => listOptions(refs, "properties", "name") },
-    { name: "unit_number", label: "Unit number", required: true, placeholder: "A-102" },
-    { name: "unit_type", label: "Unit type", required: true, placeholder: "One bedroom" },
-    { name: "rent", label: "Monthly rent", required: true, placeholder: "KSh 24,000" },
-    { name: "status", label: "Availability", type: "select", required: true, options: () => [{ label: "Vacant", value: "vacant" }, { label: "Occupied", value: "occupied" }] },
-    { name: "tenant", label: "Current tenant", placeholder: "Optional" },
-  ],
-  create: (values) => unitsAPI.create({ ...values, property: numberValue(values, "property") }),
-};
-
-const tenantForm: CreateForm = {
-  title: "Add a tenant",
-  submitLabel: "Save tenant",
-  allowedRoles: ["admin", "manager"],
-  fields: [
-    { name: "name", label: "Full name", required: true },
-    { name: "phone", label: "Phone number", type: "tel", required: true },
-    { name: "account_email", label: "Existing tenant account email", type: "email", placeholder: "Optional · links an existing tenant login" },
-    { name: "invite_email", label: "Tenant email for an invite link", type: "email", placeholder: "Optional · send them a portal invitation" },
-    { name: "property", label: "Property", type: "select", required: true, options: (refs) => listOptions(refs, "properties", "name") },
-    { name: "unit", label: "Unit", type: "select", options: (refs) => listOptions(refs, "units", "unit_number") },
-    { name: "lease_end", label: "Lease end date", type: "date", required: true },
-    { name: "rent", label: "Monthly rent", required: true, placeholder: "KSh 24,000" },
-    { name: "status", label: "Lease status", type: "select", required: true, options: () => [{ label: "Active", value: "active" }, { label: "Expiring", value: "expiring" }, { label: "Pending", value: "pending" }] },
-  ],
-  create: (values) => {
-    const tenantValues = { ...values };
-    delete tenantValues.invite_email;
-    return tenantsAPI.create({
-      ...tenantValues,
-      property: numberValue(values, "property"),
-      unit: values.unit ? numberValue(values, "unit") : null,
-    });
-  },
-  afterCreate: async (createdRecord, values) => {
-    const email = values.invite_email?.trim();
-    if (!email || values.account_email?.trim() || typeof createdRecord !== "object" || createdRecord === null || !("data" in createdRecord)) return null;
-    const responseData = (createdRecord as { data?: unknown }).data;
-    if (typeof responseData !== "object" || responseData === null || !("id" in responseData)) return null;
-    const tenantId = (responseData as { id?: unknown }).id;
-    if (typeof tenantId !== "number") return null;
-    const { data } = await tenantsAPI.invite(tenantId, email);
-    const url = new URL("/join", window.location.origin);
-    url.searchParams.set("token", data.token);
-    return url.toString();
-  },
-  validate: (values) => values.account_email?.trim() && values.invite_email?.trim()
-    ? "Use either an existing tenant account email or an invitation email, not both."
-    : null,
 };
 
 const paymentForm: CreateForm = {
@@ -527,8 +473,7 @@ function RecordForm({ form, references, onSaved }: { form: CreateForm; reference
       }
       await onSaved();
     } catch (requestError) {
-      const detail = requestError instanceof Error ? requestError.message : "";
-      setError(detail || "The record could not be saved. Check the fields and try again.");
+      setError(getApiErrorMessage(requestError, "The record could not be saved. Check the fields and try again."));
     } finally {
       setSaving(false);
     }
@@ -1107,8 +1052,8 @@ export function RecordsPage({ page }: { page: string }) {
         : await config.load();
       setRows(data.rows);
       setReferences(data.references ?? {});
-    } catch {
-      setError("Could not load these records from the SmartNest API. Check the connection and try again.");
+    } catch (requestError) {
+      setError(getApiErrorMessage(requestError,"Could not load these records. Please try again."));
     } finally {
       setLoading(false);
     }
@@ -1123,7 +1068,7 @@ export function RecordsPage({ page }: { page: string }) {
   }, [load]);
 
   const filteredRows = useMemo(() => rows.filter((row) => {
-    const matchesText = Object.values(row).some((value) => displayValue(value).toLowerCase().includes(search.toLowerCase()));
+    const matchesText = matchesSearch(Object.values(row), search);
     const status = String(row.status ?? row.match_status ?? row.condition ?? row.state ?? "").toLowerCase();
     return matchesText && (filter === "all" || status === filter);
   }), [filter, rows, search]);
@@ -1150,6 +1095,8 @@ export function RecordsPage({ page }: { page: string }) {
           <div><h2 className="panel-title">{config.title} directory</h2><p className="panel-description">{rows.length} record{rows.length === 1 ? "" : "s"} returned by the backend.</p></div>
           <label className="search-field"><Icon name="search" /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={`Search ${config.title.toLowerCase()}...`} aria-label={`Search ${config.title}`} /></label>
         </div>
+        <p role="status" className="flow-caption">{filteredRows.length} of {rows.length} records</p>
+        {(search||filter!=="all")&&<button type="button" className="button button-secondary button-compact" onClick={()=>{setSearch("");setFilter("all");}}>Clear search and filters</button>}
         {error && <div className="error-state" role="alert"><span>{error}</span><button className="button button-secondary" type="button" onClick={() => void load()}>Try again</button></div>}
         {loading ? <div className="loading-state" role="status">Loading records...</div> : !error && filteredRows.length === 0 ? (
           <div className="empty-state"><strong>{rows.length ? "No matching records" : "Nothing here yet"}</strong>{rows.length ? "Try changing the search or filter." : canWrite ? "Add a record to get this workspace started." : "Records will appear here when the service has data."}</div>
@@ -1797,8 +1744,8 @@ export function OverviewPage() {
         setPayments(paymentResponse.data);
         setJobs(jobResponse.data);
       }
-    } catch {
-      setError("Some workspace information could not be loaded from the API.");
+    } catch (requestError) {
+      setError(getApiErrorMessage(requestError,"Some workspace information could not be loaded."));
     } finally {
       setLoading(false);
     }
@@ -2199,7 +2146,7 @@ export function HelpPage() {
   ];
   return (
     <section>
-      <PageHeader title="Help & support" eyebrow="Account" description="Quick routes to common property operations." icon="help" />
+      <PageHeader title="Help & support" eyebrow="Account" description="Quick routes to common property operations." icon="help" /><section className="panel flow-card"><h2>Contact SmartNest</h2><p>Operated by {operator.name}. Support hours: {operator.supportHours}.</p><p><a href={`mailto:${operator.supportEmail}`}>{operator.supportEmail}</a></p><p>{operator.tenancyRetention}</p></section>
       <div className="support-grid">{links.map((link) => <article className="panel support-card" key={link.href}><span className="metric-icon"><Icon name={link.icon} /></span><h3>{link.title}</h3><p>{link.description}</p><Link className="button button-secondary" href={link.href}>Open <Icon name="arrow" /></Link></article>)}</div>
       <AdministratorSupport role={role}/>
       {showAccessGuide && <section className="panel role-workflow-panel">

@@ -10,6 +10,8 @@ from cryptography.fernet import Fernet
 from django.apps import apps
 from django.conf import settings
 from django.db.models import FileField
+from django.core.files.storage import default_storage
+from pathlib import PurePosixPath
 from django.core.management.base import CommandError
 
 
@@ -44,9 +46,14 @@ def uploaded_names():
                 yield from model.objects.exclude(**{field.name: ''}).values_list(field.name, flat=True)
 
 
+def validate_media_name(name):
+    path = PurePosixPath(str(name))
+    if path.is_absolute() or '..' in path.parts or not str(name) or path.as_posix() != str(name):
+        raise CommandError('Unsafe media key in storage.')
+    return str(name)
+
+
 def stored_upload_names():
-    """Also preserve older/unreferenced files inside known upload directories."""
-    root = Path(settings.MEDIA_ROOT).resolve()
     prefixes = set()
     for model in apps.get_app_config('core').get_models():
         for field in model._meta.fields:
@@ -55,14 +62,15 @@ def stored_upload_names():
                 if prefix and prefix not in ('.', '..') and '%' not in prefix:
                     prefixes.add(prefix)
     names = set()
-    for prefix in prefixes:
-        directory = safe_file(root, prefix)
-        if directory.is_dir():
-            for path in directory.rglob('*'):
-                if path.is_file():
-                    name = path.relative_to(root).as_posix()
-                    safe_file(root, name)
-                    names.add(name)
+    pending = list(prefixes)
+    while pending:
+        prefix = validate_media_name(pending.pop())
+        try:
+            directories, files = default_storage.listdir(prefix)
+        except FileNotFoundError:
+            continue
+        pending.extend(validate_media_name(prefix + '/' + name) for name in directories)
+        names.update(validate_media_name(prefix + '/' + name) for name in files)
     return names
 
 
@@ -86,19 +94,23 @@ def make_backup(output, allow_missing=False):
         stage = Path(temp)
         os.chmod(stage, 0o700)
         dump = stage / 'database.dump'
-        pg_run('pg_dump', ['--format=custom', '--no-owner', '--no-acl', '--file', str(dump)], config['NAME'])
+        arguments = ['--format=custom', '--no-owner', '--no-acl', '--file', str(dump)]
+        if os.getenv('DB_SCHEMA'):
+            arguments += ['--schema', os.environ['DB_SCHEMA']]
+        pg_run('pg_dump', arguments, config['NAME'])
         archive = stage / 'snapshot.zip'
         checksums = {}
         missing = []
         with ZipFile(archive, 'w', ZIP_DEFLATED) as bundle:
             for name in sorted(set(uploaded_names()) | stored_upload_names()):
-                path = safe_file(settings.MEDIA_ROOT, name)
-                if not path.is_file():
+                validate_media_name(name)
+                if not default_storage.exists(name):
                     if not allow_missing:
                         raise CommandError('A referenced upload is missing; backup aborted. Investigate or explicitly record missing files with --allow-missing.')
                     missing.append(name)
                     continue
-                data = path.read_bytes()
+                with default_storage.open(name, "rb") as upload:
+                    data = upload.read()
                 member = f'media/{name}'
                 checksums[member] = hashlib.sha256(data).hexdigest()
                 bundle.writestr(member, data)

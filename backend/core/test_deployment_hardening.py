@@ -76,9 +76,13 @@ class HardeningTests(TestCase):
         self.user.set_password('Old-attacker-password-1!');self.user.save()
         self.assertFalse(LoginSerializer(data={'email':self.user.email,'password':'Old-attacker-password-1!'}).is_valid())
 
-    def test_verification_survives_deletion_of_former_property(self):
+    def test_verification_survives_moveout_with_retained_property(self):
         self.user.identity_verified_at=timezone.now();self.user.save()
-        self.prop.delete()
+        from django.db.models.deletion import ProtectedError
+        with self.assertRaises(ProtectedError):self.prop.delete()
+        self.client.force_authenticate(self.manager)
+        response=self.client.post("/api/tenancy-events/",{"tenant":self.tenant.pk,"unit":self.unit.pk,"action":"check_out"},format="json")
+        self.assertEqual(response.status_code,201,response.data)
         self.user.refresh_from_db()
         self.assertEqual(TenantSerializer().validate_account_email(self.user.email),self.user)
 
@@ -169,12 +173,12 @@ class ImageAndKeyTests(SimpleTestCase):
     def test_production_defaults_are_secure_and_reject_development_flags(self):
         from cryptography.fernet import Fernet
         env={**os.environ,'DJANGO_ENV':'production','DJANGO_ALLOWED_HOSTS':'api.example.com','NOTICE_ENCRYPTION_KEYS':Fernet.generate_key().decode(),
-             'DB_USER':'smartnest_app','DB_PASSWORD':'test-only-not-a-real-password','DJANGO_MEDIA_ROOT':str(Path.cwd()/'private-test-media'),
+             'DB_USER':'smartnest_app','DB_PASSWORD':'test-only-not-a-real-password','DB_SSLMODE':'require','SMARTNEST_MEDIA_BACKEND':'filesystem','DJANGO_MEDIA_ROOT':str(Path.cwd()/'private-test-media'),
              'SUPABASE_AUTH_ENABLED':'true','SUPABASE_URL':'https://example.supabase.co','SUPABASE_PUBLISHABLE_KEY':'test-only',
              'FRONTEND_URL':'https://example.com','DJANGO_CORS_ORIGINS':'https://example.com','DJANGO_CSRF_ORIGINS':'https://example.com'}
         env.pop('DEBUG',None)
-        result=subprocess.run([sys.executable,'-c','import smartnest_api.settings as s; assert not s.DEBUG; assert s.SECURE_SSL_REDIRECT and s.CSRF_COOKIE_SECURE and s.SESSION_COOKIE_SECURE; assert not s.CORS_ALLOW_ALL_ORIGINS'],env=env,capture_output=True)
+        result=subprocess.run([sys.executable,'-c','import smartnest_api.settings as s; assert not s.DEBUG; assert s.SECURE_SSL_REDIRECT and s.CSRF_COOKIE_SECURE and s.SESSION_COOKIE_SECURE; assert not s.CORS_ALLOW_ALL_ORIGINS'],env=env,cwd=Path(__file__).resolve().parents[1],capture_output=True)
         self.assertEqual(result.returncode,0,result.stderr.decode())
         for bad in ({'DEBUG':'true'},{'DJANGO_ALLOWED_HOSTS':'*'},{'DB_USER':'postgres'},{'SUPABASE_AUTH_ENABLED':'false'}):
-            result=subprocess.run([sys.executable,'-c','import smartnest_api.settings'],env={**env,**bad},capture_output=True)
+            result=subprocess.run([sys.executable,'-c','import smartnest_api.settings'],env={**env,**bad},cwd=Path(__file__).resolve().parents[1],capture_output=True)
             self.assertNotEqual(result.returncode,0)

@@ -1,14 +1,14 @@
 # Production release and acceptance gate
 
-Status: local preparation only. No host, public domain, SMS provider or live payment service is provisioned.
+Status: reviewed 20 November 2026. Local checks pass; Vercel and Render accounts currently have no deployed SmartNest project/service. See `WEBSITE_REVIEW_2026-11-20.md` for evidence and remaining work.
 
 ## Prepare staging
-1. Choose the real domain, managed Ubuntu host and managed PostgreSQL region/budget. Keep staging and production data and credentials separate.
+1. Use the selected Vercel frontend and Render backend architecture in `VERCEL_RENDER.md`. Confirm the hosting budget, managed PostgreSQL target and region. Keep staging and production data and credentials separate. The Ubuntu/systemd instructions below apply only if that alternative is selected.
 2. Review and commit the release files and migrations. Keep private media, .env files, encryption keys and backups outside Git. Historical uploaded photos require a repository-history review before public publication.
 3. Create the restricted runtime database role using the supplied SQL example; use separate migration credentials. Copy existing data using backup/restore, never flush the existing database. Compare row counts and upload checksums.
-4. Create /etc/smartnest environment files from the examples; configure real HTTPS origins, database CA, private media/static paths and SMTP. Set the frontend public variables before building. Run deploy/validate-production.py with backend, frontend and backup environment paths.
+4. Configure the hosting providers from the production environment examples: real HTTPS origins, database TLS, private persistent media, static paths and SMTP. Set frontend public variables before building. Run deploy/validate-production.py against private environment exports; never commit those exports. For the Ubuntu alternative, use /etc/smartnest.
 5. Install dependencies, run migrations with the maintenance identity, collectstatic, and run manage.py check --deploy with actual production settings. Run the GitHub release-checks workflow on the final commit.
-6. Configure DNS/TLS and Nginx; expose only HTTPS and restricted administration access. Install API/web/worker services, backup/monitor timers and smartnest-alert@.service. Validate unit files with systemd-analyze verify before enabling them. Failure emails require real application SMTP and SMARTNEST_ALERT_EMAIL; test them only with an approved recipient. Also configure an independent external uptime alert, since a stopped server cannot send its own email.
+6. On Vercel/Render, verify provider-managed HTTPS and the Render API/worker readiness endpoint. The disk-backed API and worker share one Render instance. Set independent uptime/error monitoring and a Render-compatible backup process. Ubuntu/systemd only: configure Nginx, API/web/worker services, backup/monitor timers and smartnest-alert@.service; validate unit files before enabling them. SMTP alerts need real credentials and an approved recipient.
 7. Configure scheduled encrypted offsite backups, preserve the separate recovery key, and restore a snapshot into an isolated database/storage directory. Record recovery time and data-loss window. Test service restart and server reboot.
 
 ## Authentication and providers

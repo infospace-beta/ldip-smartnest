@@ -24,7 +24,7 @@ def https_origin(value):
         parsed=urlsplit(value or '')
         return parsed.scheme=='https' and parsed.hostname and not parsed.hostname.endswith(('.example','.invalid')) and parsed.hostname!='localhost' and not parsed.username and not parsed.password
     except ValueError:return False
-require(backend,['DJANGO_SECRET_KEY','NOTICE_ENCRYPTION_KEYS','DJANGO_ALLOWED_HOSTS','DB_NAME','DB_USER','DB_PASSWORD','DB_HOST','DB_PORT','DB_SSLMODE','DJANGO_MEDIA_ROOT','DJANGO_STATIC_ROOT','SUPABASE_URL','SUPABASE_PUBLISHABLE_KEY','FRONTEND_URL','DJANGO_CORS_ORIGINS','DJANGO_CSRF_ORIGINS'])
+require(backend,['DJANGO_SECRET_KEY','NOTICE_ENCRYPTION_KEYS','DJANGO_ALLOWED_HOSTS','DB_NAME','DB_USER','DB_PASSWORD','DB_HOST','DB_PORT','DB_SSLMODE','DJANGO_STATIC_ROOT','SUPABASE_URL','SUPABASE_PUBLISHABLE_KEY','FRONTEND_URL','DJANGO_CORS_ORIGINS','DJANGO_CSRF_ORIGINS'])
 if backend.get('DJANGO_ENV')!='production':errors.append('DJANGO_ENV=production')
 if backend.get('DEBUG','').lower()!='false':errors.append('DEBUG=false')
 if len(backend.get('DJANGO_SECRET_KEY') or '')<50:errors.append('DJANGO_SECRET_KEY length')
@@ -33,14 +33,25 @@ if backend.get('SUPABASE_AUTH_ENABLED','').lower()!='true':errors.append('SUPABA
 for name in ('FRONTEND_URL','DJANGO_CORS_ORIGINS','DJANGO_CSRF_ORIGINS'):
     for origin in (backend.get(name) or '').split(','):
         if not https_origin(origin.strip()) or '*' in origin:errors.append(name+' HTTPS origins')
-for name in ('DJANGO_MEDIA_ROOT','DJANGO_STATIC_ROOT'):
+remote=backend.get('SMARTNEST_MEDIA_BACKEND','filesystem')=='s3'
+if remote:
+    require(backend,['SMARTNEST_S3_ENDPOINT','SMARTNEST_S3_ACCESS_KEY','SMARTNEST_S3_SECRET_KEY','SMARTNEST_MEDIA_BUCKET'])
+    if not https_origin(backend.get('SMARTNEST_S3_ENDPOINT')):errors.append('private S3 HTTPS endpoint')
+else:
+    require(backend,['DJANGO_MEDIA_ROOT'])
+for name in (() if remote else ('DJANGO_MEDIA_ROOT',)):
     path=PurePosixPath(backend.get(name) or '')
     if not path.is_absolute() or any(path.is_relative_to(prefix) for prefix in ('/tmp','/run','/var/tmp','/opt/smartnest')):errors.append(name+' persistent path outside application')
 require(frontend,['NEXT_PUBLIC_SITE_URL','NEXT_PUBLIC_API_URL','NEXT_PUBLIC_SUPABASE_URL','NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY'])
 for name in ('NEXT_PUBLIC_SITE_URL','NEXT_PUBLIC_API_URL','NEXT_PUBLIC_SUPABASE_URL'):
     if not https_origin(frontend.get(name)):errors.append(name+' HTTPS URL')
 if frontend.get('NEXT_PUBLIC_SITE_URL','').rstrip('/')!=backend.get('FRONTEND_URL','').rstrip('/'):errors.append('matching frontend origins')
-require(backup,['SMARTNEST_BACKUP_KEY','SMARTNEST_OFFSITE_DEST','RCLONE_CONFIG'])
+require(backup,['SMARTNEST_BACKUP_KEY'])
+if remote:
+    require(backup,['SMARTNEST_BACKUP_BUCKET'])
+    if backup.get('SMARTNEST_BACKUP_BUCKET')==backend.get('SMARTNEST_MEDIA_BUCKET'):errors.append('separate private backup bucket')
+else:
+    require(backup,['SMARTNEST_OFFSITE_DEST','RCLONE_CONFIG'])
 try:Fernet((backup.get('SMARTNEST_BACKUP_KEY') or '').encode())
 except (ValueError,TypeError):errors.append('valid separate backup encryption key')
 if backend.get('SMARTNEST_SMS_ENABLED','').lower()=='true':require(backend,['TWILIO_ACCOUNT_SID','TWILIO_AUTH_TOKEN','TWILIO_MESSAGING_SERVICE_SID'])

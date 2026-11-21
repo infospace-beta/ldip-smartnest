@@ -9,7 +9,10 @@ const {AxiosHeaders}=require('axios');
 function loadApi(getSession) {
   let intercept,seen;
   const instance={interceptors:{request:{use:fn=>{intercept=fn;}}},get:(url,config)=>{seen={url,config};return Promise.resolve({data:{}});}};
+  const errorExports={};
+  vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname,'../src/lib/api-errors.ts'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:errorExports});
   const dependencies={
+    '@/lib/api-errors':errorExports,
     axios:{default:{create:()=>instance}},
     '@/lib/supabase/client':{createClient:()=>({auth:{getSession}})},
     '@/lib/supabase/auth-errors':{authErrorMessage:error=>error.message},

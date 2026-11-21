@@ -1,17 +1,14 @@
-# Review paid plans, region and environment values before importing into Render.
+# Free pilot: durable PostgreSQL and private object storage are hosted separately.
+# Idle services sleep; automation resumes when the service wakes.
 services:
   - type: web
     name: smartnest-api
     runtime: python
-    plan: starter
+    plan: free
     numInstances: 1
     buildCommand: pip install -r backend/requirements.txt && python backend/manage.py collectstatic --noinput
     startCommand: python -B deploy/render-start.py
     healthCheckPath: /api/health/ready/
-    disk:
-      name: smartnest-private-media
-      mountPath: /var/data
-      sizeGB: 10
     envVars:
       - key: PYTHON_VERSION
         value: 3.14.0
@@ -21,12 +18,16 @@ services:
         value: 'false'
       - key: DJANGO_TRUST_PROXY_HTTPS
         value: 'true'
+      - key: SMARTNEST_MEDIA_BACKEND
+        value: s3
+      - key: PGSSLROOTCERT
+        value: /opt/render/project/src/deploy/supabase/prod-ca-2021.crt
       - key: DJANGO_MEDIA_ROOT
-        value: /var/data/media
+        value: /tmp/smartnest-unused-media
       - key: DJANGO_STATIC_ROOT
         value: /opt/render/project/src/staticfiles
       - key: AUTOMATION_HEARTBEAT_PATH
-        value: /var/data/worker/heartbeat
+        value: /tmp/smartnest/worker/heartbeat
       - key: SMARTNEST_SMS_ENABLED
         value: 'false'
       - key: DARAJA_SANDBOX_ENABLED
@@ -43,6 +44,6 @@ services:
         sync: false
       - key: DJANGO_CSRF_ORIGINS
         sync: false
-# Set DB_*, Supabase and SMTP variables from .env.production.example in Render.
+# Set DB_*, private S3 credentials, Supabase and SMTP variables from .env.production.example in Render.
 # Provision managed PostgreSQL separately and run migrations using its maintenance
 # identity before starting this service. No database or paid resource is created here.

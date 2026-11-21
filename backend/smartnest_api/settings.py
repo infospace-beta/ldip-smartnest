@@ -10,6 +10,12 @@ from django.core.exceptions import ImproperlyConfigured
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+# An explicitly selected private environment is loaded before local defaults.
+private_environment = os.getenv('SMARTNEST_ENV_FILE')
+if private_environment:
+    if not Path(private_environment).is_file():
+        raise ImproperlyConfigured('The selected private environment file does not exist.')
+    load_dotenv(private_environment, override=False)
 # Process variables take precedence; .env supplies the local database settings.
 load_dotenv(BASE_DIR / '.env', override=False)
 load_dotenv(BASE_DIR / '.env.local', override=False)
@@ -97,6 +103,7 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'core.audit_middleware.AuditMiddleware',
+    'core.backup_lock.BackupCoordinationMiddleware',
 ]
 
 if PRODUCTION:
@@ -179,7 +186,10 @@ DATA_UPLOAD_MAX_MEMORY_SIZE = 6 * 1024 * 1024
 FILE_UPLOAD_MAX_MEMORY_SIZE = 1024 * 1024
 AUTOMATION_HEARTBEAT_PATH = Path(os.getenv('AUTOMATION_HEARTBEAT_PATH', str(BASE_DIR / '.automation-heartbeat')))
 AUTOMATION_HEARTBEAT_MAX_AGE = int(os.getenv('AUTOMATION_HEARTBEAT_MAX_AGE', '180'))
-if PRODUCTION and (not os.getenv('DJANGO_MEDIA_ROOT') or not MEDIA_ROOT.is_absolute()):
+SMARTNEST_MEDIA_BACKEND = os.getenv('SMARTNEST_MEDIA_BACKEND', 'filesystem')
+from core.storage_config import configured_storages
+STORAGES = configured_storages(SMARTNEST_MEDIA_BACKEND)
+if PRODUCTION and SMARTNEST_MEDIA_BACKEND == 'filesystem' and (not os.getenv('DJANGO_MEDIA_ROOT') or not MEDIA_ROOT.is_absolute()):
     raise ImproperlyConfigured('Production requires an absolute private persistent DJANGO_MEDIA_ROOT.')
 
 # Default primary key field type
@@ -197,6 +207,7 @@ if SUPABASE_AUTH_ENABLED and (
     raise ImproperlyConfigured('Supabase Auth requires an HTTPS SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY.')
 
 REST_FRAMEWORK = {
+    'EXCEPTION_HANDLER': 'core.api_exceptions.exception_handler',
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'core.supabase_auth.SupabaseAuthentication' if SUPABASE_AUTH_ENABLED
         else 'rest_framework_simplejwt.authentication.JWTAuthentication',

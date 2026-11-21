@@ -1,5 +1,6 @@
 "use client";
 import { useState } from 'react';
+import RecordFilters,{matchesSearch} from '@/components/RecordFilters';
 import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import api,{getApiErrorMessage} from '@/lib/api';
@@ -8,19 +9,21 @@ import {WorkflowHeader,PrivatePhoto,ErrorBox} from '@/components/WorkflowShared'
 
 export function UpcomingInspection() {
   const {user}=useAuth();
-  const {items,error}=useRecords<Inspection>('/unit-inspections/');
+  const {items,error,load}=useRecords<Inspection>('/unit-inspections/');
   const upcoming=items.filter(i=>['awaiting_confirmation','scheduled'].includes(i.status)).sort((a,b)=>(a.scheduled_at||'').localeCompare(b.scheduled_at||''))[0];
   if(!['tenant','manager','staff'].includes(user?.role||''))return null;
-  return <article className="panel flow-card"><h2>Upcoming inspection</h2>{error?<ErrorBox message={error}/>:upcoming?<><p>{pretty(upcoming.inspection_type)} · {upcoming.unit_number} · {when(upcoming.scheduled_at)}</p><p>Inspector: {upcoming.inspector_name} · {pretty(upcoming.status)}</p><Link className="button button-secondary" href="/dashboard/unit-inspections">View appointment</Link></>:<p>No upcoming inspections.</p>}</article>;
+  return <article className="panel flow-card"><h2>Upcoming inspection</h2>{error?<ErrorBox message={error} onRetry={()=>void load()}/>:upcoming?<><p>{pretty(upcoming.inspection_type)} · {upcoming.unit_number} · {when(upcoming.scheduled_at)}</p><p>Inspector: {upcoming.inspector_name} · {pretty(upcoming.status)}</p><Link className="button button-secondary" href="/dashboard/unit-inspections">View appointment</Link></>:<p>No upcoming inspections.</p>}</article>;
 }
 export default function InspectionsWorkflow() {
   const {user}=useAuth();const {items,error,loading,load}=useRecords<Inspection>('/unit-inspections/');
+  const [query,setQuery]=useState(''),[status,setStatus]=useState('all');
+  const visible=items.filter(i=>matchesSearch([i.unit_number,i.property_name,i.tenant_name,i.inspector_name,i.inspection_type],query)&&(status==='all'||i.status===status));
   const [busy,setBusy]=useState(false),[failure,setFailure]=useState(''),[success,setSuccess]=useState('');
   const act=async(i:Inspection,action:string,data:unknown={})=>{setBusy(true);setFailure('');setSuccess('');try{await postAction(`/unit-inspections/${i.id}`,action,data);setSuccess('Inspection updated.');await load();}catch(e){setFailure(getApiErrorMessage(e,'Could not update inspection.'));}finally{setBusy(false);}};
   return <section className="flow-page"><WorkflowHeader title="Inspections" description="Check-in, routine and check-out reports stay linked to the tenant and home.">{user?.role==='manager'&&<Link className="button button-secondary" href="/dashboard/automations">Automation settings</Link>}</WorkflowHeader>
-    <ErrorBox message={failure||error}/>{success&&<p className="auth-message success" role="status">{success}</p>}
+    <ErrorBox message={error} onRetry={()=>void load()} retrying={loading}/><ErrorBox message={failure}/><RecordFilters label="inspections" query={query} onQuery={setQuery} status={status} onStatus={setStatus} statuses={[...new Set(items.map(i=>i.status))].sort()} visible={visible.length} total={items.length}/>{success&&<p className="auth-message success" role="status">{success}</p>}
     {user?.role==='manager'&&<ScheduleInspection onCreated={load}/>}
-    {loading?<p role="status">Loading inspections…</p>:!items.length?<p className="empty-state">No inspections scheduled.</p>:items.map(i=><article className="panel flow-card" key={i.id}>
+    {loading?<p role="status">Loading inspections…</p>:!visible.length?<p className="empty-state">{items.length?"No inspections match these filters.":"No inspections scheduled."}</p>:visible.map(i=><article className="panel flow-card" key={i.id}>
       <div className="flow-row"><h2>{pretty(i.inspection_type)} · {i.property_name} / {i.unit_number}</h2><span className="flow-badge">{pretty(i.status)}</span></div>
       <p>{i.purpose}</p><p>{when(i.scheduled_at)} · Inspector: {i.inspector_name} · Tenant: {i.tenant_name||'No linked tenant'}</p>
       <p className="flow-caption">Awaiting confirmation → Scheduled → Completed → Awaiting review → Closed</p>

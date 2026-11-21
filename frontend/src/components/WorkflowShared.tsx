@@ -10,4 +10,4 @@ export function PrivatePhoto({path,label}:{path:string;label:string}) {
   useEffect(()=>{let active=true,objectUrl='';void api.get<Blob>(path,{responseType:'blob'}).then(r=>{if(active){objectUrl=URL.createObjectURL(r.data);setUrl(objectUrl);}}).catch(()=>{if(active)setError('Photo unavailable');});return()=>{active=false;if(objectUrl)URL.revokeObjectURL(objectUrl);};},[path]);
   return error?<p role="alert">{error}</p>:url?<a href={url} target="_blank" rel="noreferrer"><Image unoptimized width={360} height={180} className="flow-photo" src={url} alt={label}/></a>:<p role="status">Loading photo…</p>;
 }
-export function ErrorBox({message}:{message:string}) {return message?<p className="auth-message" role="alert">{message}</p>:null;}
+export function ErrorBox({message,onRetry,retrying=false}:{message:string;onRetry?:()=>void;retrying?:boolean}) {return message?<div className="auth-message" role="alert"><p>{message}</p>{onRetry&&<button type="button" className="button button-secondary" disabled={retrying} onClick={onRetry}>{retrying?'Retrying…':'Try again'}</button>}</div>:null;}

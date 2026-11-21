@@ -7,6 +7,7 @@ from django.core.management.base import BaseCommand, CommandError
 from django.db import close_old_connections
 from django.utils import timezone
 from core.workflow_service import process_automations
+from core.backup_lock import application_lock
 
 logger = logging.getLogger(__name__)
 
@@ -23,10 +24,11 @@ class Command(BaseCommand):
         while True:
             close_old_connections()
             try:
-                result = process_automations()
-                if settings.SMARTNEST_SMS_ENABLED:
-                    from core.sms import deliver_notifications
-                    result['sms'] = deliver_notifications()
+                with application_lock():
+                    result = process_automations()
+                    if settings.SMARTNEST_SMS_ENABLED:
+                        from core.sms import deliver_notifications
+                        result['sms'] = deliver_notifications()
                 if result.get('failures'):
                     raise CommandError('One or more automation policies failed; inspect policy IDs in the log.')
                 heartbeat = settings.AUTOMATION_HEARTBEAT_PATH

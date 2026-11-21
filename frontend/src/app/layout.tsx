@@ -21,7 +21,7 @@ export default function RootLayout({
           Suppress only those root attributes; app content still reports mismatches. */}
       <body suppressHydrationWarning>
         <AuthProvider>{children}</AuthProvider>
-        <footer className="legal-links" aria-label="Legal information"><Link href="/privacy">Privacy</Link><Link href="/terms">Terms</Link><a href="mailto:ogonyogad@gmail.com">Contact</a></footer>
+        <footer className="legal-links" aria-label="Legal information"><Link href="/privacy">Privacy</Link><Link href="/terms">Terms</Link><Link href="/contact">Help & support</Link></footer>
       </body>
     </html>
   );
