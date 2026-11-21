@@ -2137,13 +2137,14 @@ export function HelpPage() {
   const role=user?.role||"";
   const showAccessGuide=role==="admin"||role==="manager";
   const links = [
-    { icon: "properties", title: "Manage properties", description: "Add a property, then register its units.", href: "/dashboard/properties" },
-    { icon: "tenants", title: "Maintain lease records", description: "Keep tenant contact and lease end dates current.", href: "/dashboard/tenants" },
-    { icon: "payments", title: "Review payments", description: "Check payment references and match statuses.", href: "/dashboard/reconciliation" },
-    { icon: "maintenance", title: "Coordinate repairs", description: "Track maintenance work orders and assignments.", href: "/dashboard/maintenance" },
-    { icon: "notices", title: "Read notices", description: "View communication records stored in the workspace.", href: "/dashboard/notices" },
-    { icon: "profile", title: "Account details", description: "Check the profile fields associated with your login.", href: "/dashboard/profile" },
-  ];
+    { icon: "staff", title: "Manage accounts", description: "Review account roles and access status.", href: "/dashboard/staff", roles: ["admin"] },
+    { icon: "properties", title: "Manage properties", description: role === "staff" ? "Review properties and homes within your assigned portfolio." : "Add a property, then register its units.", href: "/dashboard/properties", roles: ["manager", "staff"] },
+    { icon: "tenants", title: "Maintain lease records", description: "Keep tenant contact and lease end dates current.", href: "/dashboard/tenants", roles: ["manager", "staff"] },
+    { icon: "payments", title: "Review payments", description: role === "tenant" ? "Review your own rent and payment history." : "Check payment references and match statuses.", href: "/dashboard/reconciliation", roles: ["manager", "tenant"] },
+    { icon: "maintenance", title: "Coordinate repairs", description: "Track maintenance work orders and assignments.", href: "/dashboard/maintenance", roles: ["manager", "staff", "maintenance", "tenant"] },
+    { icon: "notices", title: "Read notices", description: "View communication records stored in the workspace.", href: "/dashboard/notices", roles: ["admin", "manager", "staff", "maintenance", "tenant"] },
+    { icon: "profile", title: "Account details", description: "Check the profile fields associated with your login.", href: "/dashboard/profile", roles: ["admin", "manager", "staff", "maintenance", "tenant"] },
+  ].filter((link) => link.roles.includes(role));
   return (
     <section>
       <PageHeader title="Help & support" eyebrow="Account" description="Quick routes to common property operations." icon="help" /><section className="panel flow-card"><h2>Contact SmartNest</h2><p>Operated by {operator.name}. Support hours: {operator.supportHours}.</p><p><a href={`mailto:${operator.supportEmail}`}>{operator.supportEmail}</a></p><p>{operator.tenancyRetention}</p></section>

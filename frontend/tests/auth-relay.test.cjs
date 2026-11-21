@@ -9,7 +9,7 @@ function load(relative,dependencies={},globals={}){
   const filename=path.resolve(__dirname,'../src',relative);
   const compiled=ts.transpileModule(fs.readFileSync(filename,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
   const exports={};
-  vm.runInNewContext(compiled,{exports,require:name=>{if(!(name in dependencies))throw Error(`Unexpected dependency: ${name}`);return dependencies[name];},Request,Response,Headers,URL,AbortSignal,JSON,...globals},{filename});
+  vm.runInNewContext(compiled,{exports,require:name=>{if(name==='@/lib/public-site'&&!(name in dependencies))return load('lib/public-site.ts');if(!(name in dependencies))throw Error(`Unexpected dependency: ${name}`);return dependencies[name];},Request,Response,Headers,URL,AbortSignal,JSON,process:{env:{NODE_ENV:'test'}},...globals},{filename});
   return exports;
 }
 const config={'@/lib/supabase/config':{supabaseConfig:()=>({url:'https://project.example.test',key:'public-test-key'})}};

@@ -284,7 +284,12 @@ export interface DashboardStats {
 }
 
 export const authAPI = {
-  me: (accessToken?: string) => api.get<User>("/auth/me/", accessToken ? {headers:{Authorization:`Bearer ${accessToken}`}} : undefined),
+  // A sleeping API can need longer than an ordinary request to prepare the workspace.
+  // Extend only this read; sign-in and record mutations are never replayed.
+  me: (accessToken?: string) => api.get<User>("/auth/me/", {
+    timeout: 90000,
+    ...(accessToken ? {headers:{Authorization:`Bearer ${accessToken}`}} : {}),
+  }),
   updateProfile: (data: Partial<Pick<User, "username" | "phone">> & { avatar_image?: File; remove_avatar?: boolean }) => {
     if (!data.avatar_image) {
       return api.patch<User>("/auth/me/", data);

@@ -1,3 +1,4 @@
+import {authRequestOrigin} from "@/lib/public-site";
 import { supabaseConfig } from "@/lib/supabase/config";
 
 const noStore = { "Cache-Control": "no-store" };
@@ -6,7 +7,7 @@ const noStore = { "Cache-Control": "no-store" };
 // credentials, sends confirmation email, and enforces its signup restrictions.
 export async function POST(request: Request) {
   const origin = request.headers.get("origin");
-  if (origin !== new URL(request.url).origin) {
+  if (origin !== authRequestOrigin(request)) {
     return Response.json({ code: "signup_origin_invalid", msg: "Open the signup form on this website and try again." }, { status: 403, headers: noStore });
   }
   if (!request.headers.get("content-type")?.includes("application/json")) {
@@ -28,7 +29,7 @@ export async function POST(request: Request) {
     const { url, key } = supabaseConfig();
     const target = new URL("/auth/v1/signup", url);
     // Confirmation must return to this website, never to a submitted redirect.
-    target.searchParams.set("redirect_to", new URL("/auth/callback", request.url).href);
+    target.searchParams.set("redirect_to", new URL("/auth/callback", authRequestOrigin(request)).href);
     const upstream = await fetch(target, {
       method: "POST",
       headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json" },

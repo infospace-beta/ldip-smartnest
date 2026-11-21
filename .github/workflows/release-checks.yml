@@ -24,6 +24,7 @@ jobs:
       NEXT_PUBLIC_SUPABASE_URL: https://ci-placeholder.supabase.co
       NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ci-public-placeholder
       NEXT_PUBLIC_API_URL: http://localhost:8000/api
+      NEXT_PUBLIC_SITE_URL: https://ci.smartnest.test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
