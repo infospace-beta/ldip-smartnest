@@ -102,7 +102,28 @@ export default function PropertiesWorkflow() {
       setError(getApiErrorMessage(requestError, "Could not load properties. Please try again."));
     } finally { setLoading(false); }
   }, []);
-  useEffect(() => { void Promise.resolve().then(load); }, [load]);
+  useEffect(() => {
+    let cancelled = false;
+
+    Promise.all([propertiesAPI.list(), unitsAPI.list()])
+      .then(([props, houses]) => {
+        if (cancelled) return;
+        setProperties(props.data);
+        setUnits(houses.data);
+        setError("");
+      })
+      .catch((requestError: unknown) => {
+        if (cancelled) return;
+        setError(getApiErrorMessage(requestError, "Could not load properties. Please try again."));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const create = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (saving) return;
