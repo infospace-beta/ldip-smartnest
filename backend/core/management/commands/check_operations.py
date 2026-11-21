@@ -1,5 +1,7 @@
 import json
 import shutil
+import tempfile
+from django.core.files.storage import default_storage
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -21,7 +23,15 @@ class Command(BaseCommand):
         parser.add_argument('--require-offsite',action='store_true')
 
     def handle(self,*args,**options):
-        status={'api_worker_ready':False,'media_directory_present':Path(settings.MEDIA_ROOT).is_dir(),'recent_backup':False}
+        remote = getattr(settings, 'SMARTNEST_MEDIA_BACKEND', 'filesystem') == 's3'
+        media_available = Path(settings.MEDIA_ROOT).is_dir()
+        if remote:
+            try:
+                default_storage.listdir('')
+                media_available = True
+            except Exception:
+                media_available = False
+        status={'api_worker_ready':False,'media_directory_present':media_available,'media_backend':'s3' if remote else 'filesystem','recent_backup':False}
         headers={'Host':options['host']}
         target=urlsplit(options['api_url'])
         if target.scheme=='http' and target.hostname in ('127.0.0.1','::1','localhost') and getattr(settings,'SECURE_PROXY_SSL_HEADER',None)==('HTTP_X_FORWARDED_PROTO','https'):
@@ -39,7 +49,8 @@ class Command(BaseCommand):
             age=(timezone.now().timestamp()-newest.stat().st_mtime)/3600
             status['backup_age_hours']=round(age,2)
             status['recent_backup']=newest.stat().st_size>0 and 0<=age<=options['max_backup_hours']
-        free_gib=shutil.disk_usage(settings.MEDIA_ROOT).free/(1024**3) if status['media_directory_present'] else 0
+        disk_path = tempfile.gettempdir() if remote else settings.MEDIA_ROOT
+        free_gib=shutil.disk_usage(disk_path).free/(1024**3) if Path(disk_path).is_dir() else 0
         status['disk_free_gib']=round(free_gib,2)
         status['enough_disk_space']=free_gib>=max(0,options['min_free_gib'])
         checks=['api_worker_ready','media_directory_present','recent_backup','enough_disk_space']

@@ -1,4 +1,4 @@
-"""One Render instance: API and worker share the service's persistent disk."""
+"""One Render instance: API and worker share a heartbeat; durable records and uploads live externally."""
 import os
 from pathlib import Path
 import signal

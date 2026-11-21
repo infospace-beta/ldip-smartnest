@@ -1,4 +1,5 @@
 "use client";
+import {operator} from "@/lib/operator";
 import Link from 'next/link';
 import {useEffect,useRef,useState,type FormEvent} from 'react';
 import {communicationAPI,getApiErrorMessage,type CommunicationContact} from '@/lib/api';
@@ -7,7 +8,7 @@ export default function AdministratorSupport({role}:{role:string}) {
   const [admins,setAdmins]=useState<CommunicationContact[]>([]),[loading,setLoading]=useState(true);
   const [error,setError]=useState(''),[sent,setSent]=useState(false),[busy,setBusy]=useState(false);
   const submitting=useRef(false);
-  const supportEmail=process.env.NEXT_PUBLIC_SUPPORT_EMAIL||'ogonyogad@gmail.com';
+  const supportEmail=operator.supportEmail;
   const emailLink=`mailto:${encodeURIComponent(supportEmail)}?subject=SmartNest%20support%20request`;
   const eligible=['manager','tenant','staff','maintenance'].includes(role);
   useEffect(()=>{

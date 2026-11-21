@@ -1,5 +1,6 @@
 "use client";
 import { useState,type FormEvent } from 'react';
+import RecordFilters,{matchesSearch} from '@/components/RecordFilters';
 import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import api,{getApiErrorMessage} from '@/lib/api';
@@ -8,11 +9,13 @@ import { WorkflowHeader,PrivatePhoto,ErrorBox } from '@/components/WorkflowShare
 
 export default function MaintenanceWorkflow() {
   const {user}=useAuth();const {items,loading,error,load}=useRecords<Repair>('/maintenance/');
+  const [query,setQuery]=useState(''),[status,setStatus]=useState('all');
+  const visible=items.filter(j=>matchesSearch([j.issue,j.description,j.job_id,j.property_name,j.unit_number,j.assignee,j.category],query)&&(status==='all'||j.status===status));
   const [message,setMessage]=useState(''),[failure,setFailure]=useState(''),[busy,setBusy]=useState(false);
   const act=async(job:Repair,action:string,data:unknown={})=>{setBusy(true);setFailure('');setMessage('');try{await postAction(`/maintenance/${job.id}`,action,data);setMessage('Repair updated.');await load();}catch(e){setFailure(getApiErrorMessage(e,'Could not update this repair.'));}finally{setBusy(false);}};
   const submit=async(e:FormEvent<HTMLFormElement>)=>{e.preventDefault();const form=e.currentTarget;setBusy(true);setFailure('');try{const r=await api.post('/maintenance/',uploadForm(form),{headers:{'Content-Type':'multipart/form-data'}});form.reset();setMessage(r.data.linked_existing?'This issue is already open. Your request is linked to the existing repair.':'Request submitted with your property, unit and contact details.');await load();}catch(e){setFailure(getApiErrorMessage(e,'Could not submit your request.'));}finally{setBusy(false);}};
   return <section className="flow-page"><WorkflowHeader title="Maintenance" description="Request, approve, coordinate and confirm repairs in one place.">{user?.role==='manager'&&<Link className="button button-secondary" href="/dashboard/automations">Automation settings</Link>}</WorkflowHeader>
-    <ErrorBox message={error||failure}/>{message&&<p role="status" className="auth-message success">{message}</p>}
+    <ErrorBox message={error} onRetry={()=>void load()} retrying={loading}/><ErrorBox message={failure}/><RecordFilters label="repairs" query={query} onQuery={setQuery} status={status} onStatus={setStatus} statuses={[...new Set(items.map(j=>j.status))].sort()} visible={visible.length} total={items.length}/>{message&&<p role="status" className="auth-message success">{message}</p>}
     {user?.role==='tenant'&&<details className="panel flow-card"><summary>Report a repair</summary><form className="flow-form" onSubmit={submit}>
       <label>Category<select name="category">{categories.map(c=><option key={c}>{c}</option>)}</select></label>
       <label>Problem<input name="issue" required maxLength={200} placeholder="What needs fixing?"/></label>
@@ -23,7 +26,7 @@ export default function MaintenanceWorkflow() {
       <p>Your property, unit and contact information are added automatically.</p><button className="button button-primary" disabled={busy}>Submit request</button>
     </form></details>}
     {user?.role==='manager'&&<ManagerRepair onCreated={load}/>}
-    {loading?<p role="status">Loading repairs…</p>:!items.length?<div className="empty-state">No repair requests yet.</div>:<div className="flow-grid">{items.map(j=><article className="panel flow-card" key={j.id}>
+    {loading?<p role="status">Loading repairs…</p>:!visible.length?<div className="empty-state">{items.length?"No repairs match these filters.":"No repair requests yet."}</div>:<div className="flow-grid">{visible.map(j=><article className="panel flow-card" key={j.id}>
       <div className="flow-row"><span className="page-eyebrow">{j.job_id}</span><span className={`flow-badge ${j.priority==='high'?'urgent':''}`}>{j.priority} priority</span></div>
       <h2>{j.issue}</h2><p>{j.property_name} · {j.unit_number} · {pretty(j.category)}</p><span className="flow-badge">{pretty(j.status)}</span>
       {j.description&&<p>{j.description}</p>}{j.has_damage_photo&&<PrivatePhoto path={`/maintenance/${j.id}/photo/`} label="Reported problem"/>}{j.inspection_photos?.map(p=><PrivatePhoto key={p.id} path={`/maintenance/${j.id}/inspection-photos/${p.id}/`} label={p.caption||'Inspection issue'}/>)}

@@ -1,3 +1,4 @@
+import {describeApiFailure} from "@/lib/api-errors";
 import axios, { InternalAxiosRequestConfig } from "axios";
 import { createClient } from "@/lib/supabase/client";
 import { authErrorMessage } from "@/lib/supabase/auth-errors";
@@ -18,22 +19,7 @@ export function getApiErrorMessage(error: unknown, fallback: string): string {
     return error instanceof Error ? error.message : fallback;
   }
 
-  if (error.code === "ECONNABORTED" || error.code === "ETIMEDOUT") {
-    return "The request took too long. Refresh to check whether it was saved before trying again.";
-  }
-
-  const data: unknown = error.response?.data;
-  if (typeof data === "string" && data.trim()) return data;
-  if (typeof data === "object" && data !== null) {
-    const details = Object.entries(data).flatMap(([field, value]) => {
-      const messages = Array.isArray(value) ? value : [value];
-      return messages
-        .filter((message): message is string => typeof message === "string")
-        .map((message) => field === "detail" || field === "error" ? message : `${field}: ${message}`);
-    });
-    if (details.length) return details.join(" ");
-  }
-  return error.message || fallback;
+  return describeApiFailure(error, fallback);
 }
 
 api.interceptors.request.use(async (config: InternalAxiosRequestConfig) => {

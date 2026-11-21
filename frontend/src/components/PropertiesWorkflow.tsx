@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { useAuth } from "@/contexts/AuthContext";
 import { propertiesAPI, unitsAPI, tenantsAPI, getApiErrorMessage, type Property, type Unit, type Tenant } from "@/lib/api";
 import InvitationComposer from "@/components/InvitationComposer";
+import RecordFilters,{matchesSearch} from '@/components/RecordFilters';
 import Icon from "@/components/Icon";
 
 function TenantCheckIn({ unit, onSaved, onBack }: { unit: Unit; onSaved: () => Promise<void>; onBack: () => void }) {
@@ -83,6 +84,7 @@ function TenantCheckIn({ unit, onSaved, onBack }: { unit: Unit; onSaved: () => P
 
 export default function PropertiesWorkflow() {
   const { user } = useAuth();
+  const [query,setQuery]=useState(''),[unitStatus,setUnitStatus]=useState('all');
   const [properties, setProperties] = useState<Property[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
@@ -120,9 +122,11 @@ export default function PropertiesWorkflow() {
     finally { setSaving(false); }
   };
   const property = properties.find((item) => item.id === selected);
-  const houses = units.filter((item) => item.property === selected).sort((a, b) => a.unit_number.localeCompare(b.unit_number, undefined, { numeric: true }));
+  const visibleProperties=properties.filter(item=>matchesSearch([item.name,item.location,item.cluster,...units.filter(u=>u.property===item.id).map(u=>u.unit_number)],query));
+  const houses = units.filter((item) => item.property === selected && (unitStatus==='all'||item.status===unitStatus) && matchesSearch([item.unit_number,item.tenant,property?.name,property?.location],query)).sort((a, b) => a.unit_number.localeCompare(b.unit_number, undefined, { numeric: true }));
   return <section>
     <div className="page-heading"><div><div className="page-eyebrow">Portfolio</div><h1 className="page-title">Properties &amp; units</h1><p className="page-description">Choose a property, select a vacant house, and complete tenant check-in before sending an invitation.</p></div>{user?.role === "manager" && <button type="button" className="button button-primary" onClick={() => { setCreating(!creating); setSelectedUnit(null); }}><Icon name="add" />{creating ? "Close" : "Add a property"}</button>}</div>
+    <RecordFilters label="homes" query={query} onQuery={setQuery} status={unitStatus} onStatus={setUnitStatus} statuses={["vacant","occupied"]} visible={selected?houses.length:visibleProperties.length} total={selected?units.filter(u=>u.property===selected).length:properties.length}/>
     {error && <div className="error-state" role="alert">{error}<button type="button" className="button button-secondary" onClick={() => void load()}>Refresh</button></div>}
     {creating && <section className="panel form-panel"><h2 className="panel-title">Add a property</h2><p className="panel-description">Houses are created automatically and start vacant.</p><form onSubmit={create}><div className="form-grid">
       <label className="field"><span>Property name</span><input name="name" required maxLength={200} /></label>
@@ -134,8 +138,8 @@ export default function PropertiesWorkflow() {
       <label className="field field-full"><span>Photo URL</span><input name="photo_url" type="url" /></label>
     </div><div className="form-actions"><button type="submit" className="button button-primary" disabled={saving}>{saving ? "Saving…" : "Save property and view houses"}</button></div></form></section>}
     {loading ? <div className="loading-state" role="status">Loading properties…</div> : <>
-      {!selectedUnit && <div className="property-flow-grid">{properties.map((item) => <button type="button" className={`panel property-flow-card ${selected === item.id ? "selected" : ""}`} key={item.id} onClick={() => { setSelected(item.id); setCreating(false); }} aria-pressed={selected === item.id}><Icon name="properties" /><strong>{item.name}</strong><span>{item.location}</span><small>{item.total_units} houses · {item.occupied_units} occupied</small></button>)}</div>}
-      {!properties.length && !error && <div className="empty-state"><strong>No properties yet</strong>Add a property to create its vacant houses.</div>}
+      {!selectedUnit && <div className="property-flow-grid">{visibleProperties.map((item) => <button type="button" className={`panel property-flow-card ${selected === item.id ? "selected" : ""}`} key={item.id} onClick={() => { setSelected(item.id); setCreating(false); }} aria-pressed={selected === item.id}><Icon name="properties" /><strong>{item.name}</strong><span>{item.location}</span><small>{item.total_units} houses · {item.occupied_units} occupied</small></button>)}</div>}
+      {!visibleProperties.length && !error && <div className="empty-state"><strong>{properties.length?"No matching properties":"No properties yet"}</strong>{properties.length?"Try a different name, location or home number.":"Add a property to create its vacant houses."}</div>}
       {property && !selectedUnit && <section className="panel form-panel"><div className="panel-heading"><div><h2 className="panel-title">{property.name} · Houses</h2><p className="panel-description">{canCheckIn ? "Select a vacant house to add a tenant and complete check-in." : "House availability for this property."}</p></div></div><div className="property-flow-grid">{houses.map((unit) => <button type="button" className={`unit-flow-card ${unit.status}`} key={unit.id} disabled={unit.status !== "vacant" || !canCheckIn} onClick={() => setSelectedUnit(unit)}><strong>House {unit.unit_number}</strong><span className={`status-pill ${unit.status === "vacant" ? "green" : ""}`}>{unit.status}</span><span>{unit.unit_type} · {unit.rent}</span>{unit.status === "occupied" && unit.tenant && <small>{unit.tenant}</small>}</button>)}</div>{!houses.length && <p>No houses are available in your assigned scope.</p>}</section>}
       {selectedUnit && <TenantCheckIn key={selectedUnit.id} unit={selectedUnit} onSaved={load} onBack={() => setSelectedUnit(null)} />}
     </>}

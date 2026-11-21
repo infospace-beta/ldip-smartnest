@@ -41,7 +41,7 @@ class UserSerializer(serializers.ModelSerializer):
 
 class UserProfileSerializer(serializers.ModelSerializer):
     remove_avatar = serializers.BooleanField(required=False, write_only=True)
-    avatar_image = serializers.FileField(required=False, allow_empty_file=False)
+    avatar_image = serializers.FileField(required=False, allow_empty_file=False, write_only=True)
 
     class Meta:
         model = User

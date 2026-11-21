@@ -5,6 +5,7 @@ from . import onboarding_backend
 from . import manager_team
 from . import workflow_views as workflow
 from .health import readiness
+from .task_inbox import task_inbox
 from . import daraja_views as daraja
 from .account_security import security_settings
 from .invitation_accept import accept_invitation
@@ -47,6 +48,8 @@ urlpatterns = [
     path('communication/contacts/', views.communication_contacts, name='communication_contacts'),
     path('communication/conversations/', views.conversations_list, name='conversations_list'),
     path('communication/conversations/<int:pk>/messages/', views.conversation_messages, name='conversation_messages'),
+
+    path('dashboard/tasks/', task_inbox, name='task_inbox'),
 
     # Dashboard
     path('dashboard/stats/', views.dashboard_stats, name='dashboard_stats'),

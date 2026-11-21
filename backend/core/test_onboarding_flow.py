@@ -68,7 +68,7 @@ class OnboardingFlowTests(TestCase):
     def test_invitation_blocked_before_checkin_and_after_checkout(self):
         tenant = Tenant.objects.create(property=self.prop, unit=self.unit, name='Pending', phone='0700', lease_end='2027-12-31', rent='20000', status='pending')
         self.assertEqual(self.client.post(f'/api/tenants/{tenant.pk}/invite/', {'email': 'tenant@flow.test'}, format='json').status_code, 400)
-        tenant.delete()
+        self.assertTrue(Tenant.objects.filter(pk=tenant.pk).exists())
         data = self.check_in()
         invitation = self.client.post(f"/api/tenants/{data['id']}/invite/", {'email': 'tenant@flow.test'}, format='json')
         out = self.client.post('/api/tenancy-events/', {'tenant': data['id'], 'unit': self.unit.pk, 'action': 'check_out'}, format='json')

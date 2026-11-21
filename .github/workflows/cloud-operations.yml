@@ -1,0 +1,52 @@
+name: Cloud backups and readiness
+on:
+  schedule:
+    - cron: '17 0 * * *'
+    - cron: '23,53 * * * *'
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Operation to verify
+        type: choice
+        options: [both, backup, health]
+        default: both
+permissions:
+  contents: read
+concurrency:
+  group: smartnest-cloud-operations
+  cancel-in-progress: false
+jobs:
+  backup:
+    if: vars.SMARTNEST_OPERATIONS_ENABLED == 'true' && (github.event.schedule == '17 0 * * *' || github.event_name == 'workflow_dispatch' && inputs.operation != 'health')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - run: python -m pip install -r backend/requirements.txt
+      - name: Install matching PostgreSQL client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-common ca-certificates
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-client-18
+      - name: Back up and verify recovery contents
+        env:
+          SMARTNEST_BACKUP_ENV: ${{ secrets.SMARTNEST_BACKUP_ENV }}
+          PG_BIN: /usr/lib/postgresql/18/bin
+        run: python deploy/cloud-operations.py backup
+  health:
+    if: vars.SMARTNEST_OPERATIONS_ENABLED == 'true' && (github.event.schedule != '17 0 * * *' || github.event_name == 'workflow_dispatch') && inputs.operation != 'backup'
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Check API and worker readiness
+        env:
+          SMARTNEST_API_URL: ${{ vars.SMARTNEST_API_URL }}
+        run: python deploy/cloud-operations.py health

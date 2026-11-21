@@ -12,6 +12,7 @@ from django.conf import settings
 from django.contrib.auth.tokens import default_token_generator
 from django.contrib.auth import get_user_model
 from django.db import transaction
+from django.db.models.deletion import ProtectedError
 from django.db.models import Count, Q, Sum
 from django.core.mail import send_mail
 from django.http import FileResponse
@@ -710,7 +711,10 @@ def property_detail(request, pk):
     elif request.method == 'DELETE':
         if not has_role(request.user, 'manager'):
             return forbidden()
-        prop.delete()
+        try:
+            prop.delete()
+        except ProtectedError:
+            return Response({"detail":"This property has retained tenancy history and cannot be deleted. Record move-outs and disable account access instead."},status=status.HTTP_409_CONFLICT)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 

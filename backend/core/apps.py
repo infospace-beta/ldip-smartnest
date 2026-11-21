@@ -5,7 +5,7 @@ class CoreConfig(AppConfig):
     name = 'core'
 
     def ready(self):
-        from . import workflow_signals  # noqa: F401
+        from . import workflow_signals, retention  # noqa: F401
         from django.db.models.signals import m2m_changed
         from .models import Notice
         from .sms import queue_notice_sms

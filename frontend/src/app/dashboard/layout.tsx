@@ -7,6 +7,8 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import Icon from "@/components/Icon";
 import UserAvatar from "@/components/UserAvatar";
+import WorkspaceStart from "@/components/WorkspaceStart";
+import "@/styles/pilot.css";
 import SecurityRecommendation from "@/components/SecurityRecommendation";
 
 type NavItem = { label: string; href: string; icon: string; roles: string[]; section: string };
@@ -129,7 +131,7 @@ function DashboardShell({ children }: { children: ReactNode }) {
 
   const sections = [...new Set(visibleItems.map((item) => item.section))];
   return (
-    <div className="app">
+    <div className="app"><a className="skip-workspace" href="#workspace-content">Skip to workspace</a>
       {sidebarOpen && <button className="sidebar-backdrop" aria-label="Close navigation" onClick={() => setSidebarOpen(false)} />}
       <aside className={`sidebar ${sidebarOpen ? "show" : ""}`} aria-label="Main navigation">
         <Link className="brand" href="/dashboard">
@@ -165,7 +167,7 @@ function DashboardShell({ children }: { children: ReactNode }) {
             <button className="icon-button" aria-label="Sign out" onClick={logout}><Icon name="logout" /></button>
           </div>
         </header>
-        <main className="content"><SecurityRecommendation/>{children}</main>
+        <main className="content" id="workspace-content" tabIndex={-1}><SecurityRecommendation/><WorkspaceStart/>{children}</main>
       </div>
       <nav className="mobile-nav" aria-label="Mobile navigation">{renderNav(visibleItems.slice(0, 5))}</nav>
     </div>
