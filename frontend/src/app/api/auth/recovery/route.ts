@@ -1,3 +1,4 @@
+import {authRequestOrigin} from "@/lib/public-site";
 import {createClient} from '@/lib/supabase/server';
 
 const headers = {'Cache-Control':'private, no-store','Referrer-Policy':'no-referrer'};
@@ -6,7 +7,7 @@ const reply = (body: object, status = 200) => Response.json(body, {status, heade
 // GET/prefetch must never consume an email token. Only an explicit same-site POST
 // verifies it. Supabase still enforces token ownership, expiry and one-time use.
 export async function POST(request: Request) {
-  if (request.headers.get('origin') !== new URL(request.url).origin) return reply({message:'Open the password-reset page on this website.'},403);
+  if (request.headers.get('origin') !== authRequestOrigin(request)) return reply({message:'Open the password-reset page on this website.'},403);
   if (!request.headers.get('content-type')?.includes('application/json')) return reply({message:'Expected JSON.'},415);
   let input;
   try {

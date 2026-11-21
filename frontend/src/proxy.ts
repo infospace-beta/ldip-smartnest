@@ -2,6 +2,7 @@ import { sessionCookieSecurity } from "@/lib/supabase/cookie-security";
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { supabaseConfig } from "@/lib/supabase/config";
+import { authRequestOrigin } from "@/lib/public-site";
 
 export async function proxy(request: NextRequest) {
   const { url, key } = supabaseConfig();
@@ -19,7 +20,7 @@ export async function proxy(request: NextRequest) {
   });
   const { data, error } = await supabase.auth.getClaims();
   if ((error || !data?.claims) && request.nextUrl.pathname.startsWith("/dashboard")) {
-    const target = new URL("/login", request.url);
+    const target = new URL("/login", authRequestOrigin(request));
     target.searchParams.set("next", request.nextUrl.pathname + request.nextUrl.search);
     const redirect = NextResponse.redirect(target);
     response.cookies.getAll().forEach((cookie) => redirect.cookies.set(cookie));

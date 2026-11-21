@@ -1,8 +1,9 @@
+import {authRequestOrigin} from "@/lib/public-site";
 import {supabaseConfig} from '@/lib/supabase/config';
 export async function POST(request:Request,{params}:{params:Promise<{action:string}>}) {
   const {action}=await params;
   if(!['recover','otp','resend'].includes(action))return Response.json({msg:'Unknown authentication action.'},{status:404});
-  const site=new URL(request.url).origin;
+  const site=authRequestOrigin(request);
   if(request.headers.get('origin')!==site)return Response.json({msg:'Open the sign-in form on this website.'},{status:403});
   const headers={'Cache-Control':'no-store','Content-Type':'application/json'};
   if(!request.headers.get('content-type')?.includes('application/json'))return Response.json({msg:'Expected JSON.'},{status:415,headers});

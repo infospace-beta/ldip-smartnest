@@ -9,7 +9,7 @@ function load(relative,dependencies={}) {
   const filename=path.resolve(__dirname,'../src',relative);
   const exports={};
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(filename,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
-    {exports,require:name=>{assert.ok(name in dependencies,`Unexpected dependency ${name}`);return dependencies[name];},Request,Response,Headers,URL,JSON},{filename});
+    {exports,require:name=>{if(name==='@/lib/public-site'&&!(name in dependencies))return load('lib/public-site.ts');assert.ok(name in dependencies,`Unexpected dependency ${name}`);return dependencies[name];},Request,Response,Headers,URL,JSON,process:{env:{NODE_ENV:'test'}}},{filename});
   return exports;
 }
 const req=(body,origin='http://localhost:3000')=>new Request('http://localhost:3000/api/auth/confirm',{method:'POST',headers:{origin,'Content-Type':'application/json'},body:JSON.stringify(body)});
