@@ -38,7 +38,7 @@ jobs:
           PG_BIN: /usr/lib/postgresql/18/bin
         run: python deploy/cloud-operations.py backup
   health:
-    if: vars.SMARTNEST_OPERATIONS_ENABLED == 'true' && (github.event.schedule != '17 0 * * *' || github.event_name == 'workflow_dispatch') && inputs.operation != 'backup'
+    if: vars.SMARTNEST_OPERATIONS_ENABLED == 'true' && vars.SMARTNEST_API_URL != '' && (github.event.schedule != '17 0 * * *' || github.event_name == 'workflow_dispatch') && inputs.operation != 'backup'
     runs-on: ubuntu-latest
     timeout-minutes: 6
     steps:
